@@ -418,8 +418,6 @@ body {
   position: absolute;
   pointer-events: all; z-index: 1;
   border-radius: 4px;
-  border-left-style: solid;
-  border-left-width: 3px;
   cursor: default;
 }
 
@@ -834,6 +832,7 @@ function init() {
 
   document.addEventListener('click', onDocClick);
   document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('wheel', hideBarHover, { passive: true });
 }
 
 // ── PERSISTENCE ────────────────────────────────────────────────────────────────
@@ -1305,7 +1304,26 @@ function hexToRgba(hex, alpha) {
 }
 
 function weekLanes(weekIdx) {
-  // Collect all visible segments for this week, keyed by tripId
+  const ws = new Date(viewStart.getTime() + weekIdx * WK);
+  const we = new Date(ws.getTime() + WK);
+
+  // Global trip spans: start = midnight of first event's day, end = midnight after last event's day
+  const tripSpan = new Map();
+  for (const ev of events) {
+    if (!evVisible(ev)) continue;
+    const key      = ev.tripId ?? null;
+    const dayStart = new Date(ev.start.getFullYear(), ev.start.getMonth(), ev.start.getDate());
+    const dayEnd   = new Date(ev.end.getFullYear(),   ev.end.getMonth(),   ev.end.getDate() + 1);
+    if (!tripSpan.has(key)) {
+      tripSpan.set(key, { start: dayStart, end: dayEnd });
+    } else {
+      const sp = tripSpan.get(key);
+      if (dayStart < sp.start) sp.start = dayStart;
+      if (dayEnd   > sp.end)   sp.end   = dayEnd;
+    }
+  }
+
+  // Event segments for this week, keyed by tripId
   const byTrip = new Map();
   for (const ev of events) {
     if (!evVisible(ev)) continue;
@@ -1316,17 +1334,21 @@ function weekLanes(weekIdx) {
     byTrip.get(key).push({ ...seg, ev });
   }
 
-  // Process trips in sidebar order so bands are stable; unassigned last
+  // Process trips in sidebar order; unassigned last
   const tripOrder = [...trips.map(t => t.id), null];
   const allSegs   = [];
   const tripBands = [];
   let   laneOffset = 0;
 
   for (const tripId of tripOrder) {
-    const tripSegs = byTrip.get(tripId);
-    if (!tripSegs || !tripSegs.length) continue;
+    const span = tripSpan.get(tripId);
+    if (!span || span.end <= ws || span.start >= we) continue; // not in this week
 
-    // Greedy lane packing within this trip only
+    const tripSegs = byTrip.get(tripId) || [];
+    const trip  = trips.find(t => t.id === tripId);
+    const color = trip ? trip.color : '#94a3b8';
+
+    // Greedy lane packing for events in this week
     tripSegs.sort((a, b) => a.left - b.left || b.width - a.width);
     const ends = [];
     for (const s of tripSegs) {
@@ -1335,16 +1357,18 @@ function weekLanes(weekIdx) {
       ends[lane] = s.left + s.width;
       s.lane = laneOffset + lane;
     }
-
     const tripLaneCount = Math.max(1, ends.length);
-    const trip  = trips.find(t => t.id === tripId);
-    const color = trip ? trip.color : '#94a3b8';
-    const DAY_PCT   = 100 / 7;
-    const rawLeft   = Math.min(...tripSegs.map(s => s.left));
-    const rawRight  = Math.max(...tripSegs.map(s => s.left + s.width));
-    const bandLeft  = Math.floor(rawLeft  / DAY_PCT) * DAY_PCT;
-    const bandRight = Math.ceil (rawRight / DAY_PCT) * DAY_PCT;
-    tripBands.push({ tripId, color, laneStart: laneOffset, laneCount: tripLaneCount, bandLeft, bandRight });
+
+    // Band: clamp trip span to this week, expressed as % of week width
+    const clampedStart  = Math.max(ws.getTime(), span.start.getTime());
+    const clampedEnd    = Math.min(we.getTime(), span.end.getTime());
+    const bandLeft      = (clampedStart - ws.getTime()) / WK * 100;
+    const bandRight     = (clampedEnd   - ws.getTime()) / WK * 100;
+    // Show border only at the true start/end of the trip (not at week boundaries)
+    const showBorderL = clampedStart === span.start.getTime();
+    const showBorderR = clampedEnd   === span.end.getTime();
+
+    tripBands.push({ tripId, color, laneStart: laneOffset, laneCount: tripLaneCount, bandLeft, bandRight, showBorderL, showBorderR });
     allSegs.push(...tripSegs);
     laneOffset += tripLaneCount;
   }
@@ -1381,11 +1405,16 @@ function renderCal() {
 
     // Trip lane bands (colored background strips per trip)
     let bands = '';
-    for (const { tripId, color, laneStart, laneCount: lc, bandLeft, bandRight } of tripBands) {
-      const bTop = DATE_ROW + LANE_TOP + laneStart * (LANE_H + LANE_GAP) - 3;
-      const bH   = lc * (LANE_H + LANE_GAP) - LANE_GAP + 6;
-      const bW   = (bandRight - bandLeft).toFixed(3);
-      bands += `<div class="trip-band" data-trip-id="${tripId ?? ''}" style="top:${bTop}px;height:${bH}px;left:${bandLeft.toFixed(3)}%;width:${bW}%;background:${hexToRgba(color,.07)};border-left-color:${color}"></div>`;
+    for (const { tripId, color, laneStart, laneCount: lc, bandLeft, bandRight, showBorderL, showBorderR } of tripBands) {
+      const bTop   = DATE_ROW + LANE_TOP + laneStart * (LANE_H + LANE_GAP) - 3;
+      const bH     = lc * (LANE_H + LANE_GAP) - LANE_GAP + 6;
+      const bW     = (bandRight - bandLeft).toFixed(3);
+      const bl     = showBorderL ? `border-left:3px solid ${color};` : 'border-left:none;';
+      const br     = showBorderR ? `border-right:3px solid ${color};` : 'border-right:none;';
+      const tl     = showBorderL ? '4px' : '0';
+      const tr     = showBorderR ? '4px' : '0';
+      const radius = `border-radius:${tl} ${tr} ${tr} ${tl};`;
+      bands += `<div class="trip-band" data-trip-id="${tripId ?? ''}" style="top:${bTop}px;height:${bH}px;left:${bandLeft.toFixed(3)}%;width:${bW}%;background:${hexToRgba(color,.07)};${bl}${br}${radius}"></div>`;
     }
 
     // Day columns + date numbers
