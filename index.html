@@ -325,6 +325,104 @@ body {
 .trip-act-btn:hover { background: #e2e8f0; color: var(--text); }
 .trip-act-btn.del:hover { color: #dc2626; background: #fef2f2; }
 
+/* ── TRIP VIZ MODAL ─────────────────────── */
+#trip-viz-overlay {
+  display: none; position: fixed; inset: 0; z-index: 8000;
+  background: rgba(15,23,42,.55); backdrop-filter: blur(3px);
+  align-items: center; justify-content: center;
+}
+#trip-viz-overlay.open { display: flex; }
+#trip-viz-modal {
+  background: #fff; border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.22);
+  width: min(720px, 94vw); max-height: 88vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.tviz-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 20px 24px 16px; border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tviz-color-bar {
+  width: 5px; height: 36px; border-radius: 3px; flex-shrink: 0;
+}
+.tviz-title { font-size: 18px; font-weight: 700; color: #0f172a; flex: 1; }
+.tviz-close {
+  width: 28px; height: 28px; border-radius: 6px;
+  background: none; border: none; cursor: pointer;
+  font-size: 16px; color: #94a3b8; display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+}
+.tviz-close:hover { background: #f1f5f9; color: #0f172a; }
+.tviz-stats {
+  display: flex; gap: 0; border-bottom: 1px solid var(--border);
+  flex-shrink: 0; background: #f8fafc;
+}
+.tviz-stat {
+  flex: 1; padding: 12px 16px; text-align: center;
+  border-right: 1px solid var(--border);
+}
+.tviz-stat:last-child { border-right: none; }
+.tviz-stat-val { font-size: 18px; font-weight: 700; color: #0f172a; white-space: nowrap; }
+.tviz-stat-lbl { font-size: 11px; color: #64748b; margin-top: 2px; }
+.tviz-map-btn {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  margin: 16px 24px 0; padding: 10px 16px; border-radius: 9px;
+  background: #eff6ff; border: 1.5px solid #bfdbfe; color: #1d4ed8;
+  font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none;
+  transition: all .15s;
+}
+.tviz-map-btn:hover { background: #dbeafe; }
+.tviz-body { overflow-y: auto; padding: 8px 24px 24px; flex: 1; }
+.tviz-day {
+  margin-top: 22px;
+}
+.tviz-day-header {
+  display: flex; align-items: center; gap: 10px;
+  padding-bottom: 8px; border-bottom: 2px solid #f1f5f9;
+  margin-bottom: 10px;
+}
+.tviz-day-num {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: #0f172a; color: #fff;
+  font-size: 12px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.tviz-day-label { font-size: 14px; font-weight: 700; color: #0f172a; }
+.tviz-day-sublabel { font-size: 12px; color: #94a3b8; margin-left: auto; }
+.tviz-ev {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 9px 12px; border-radius: 9px; margin-bottom: 0; margin-top: 6px;
+  background: #f8fafc; border: 1px solid #f1f5f9;
+}
+.tviz-ev:hover { border-color: #e2e8f0; }
+.tviz-ev-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.tviz-ev-body { flex: 1; min-width: 0; }
+.tviz-ev-title { font-size: 13px; font-weight: 600; color: #0f172a; }
+.tviz-ev-time { font-size: 11px; color: #64748b; margin-top: 1px; }
+.tviz-ev-desc { font-size: 12px; color: #475569; margin-top: 4px; white-space: pre-wrap; }
+.tviz-ev-drive {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center;
+}
+.tviz-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 600;
+  background: #fef3c7; color: #92400e;
+}
+.tviz-chip.blue { background: #dbeafe; color: #1e40af; }
+.tviz-ev-drive a {
+  font-size: 11px; color: #2563eb; text-decoration: none; font-weight: 600;
+}
+.tviz-ev-drive a:hover { text-decoration: underline; }
+.tviz-route {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: #475569;
+  margin-top: 5px; flex-wrap: wrap;
+}
+.tviz-route-arrow { color: #94a3b8; }
+.tviz-no-events { color: #94a3b8; font-size: 13px; font-style: italic; padding: 20px 0; text-align: center; }
+.tviz-loc-link { color: #0f172a; font-weight: 600; text-decoration: none; }
+.tviz-loc-link:hover { text-decoration: underline; color: #2563eb; }
+
 .unassigned-row {
   display: flex; align-items: center; gap: 7px;
   padding: 7px 7px 0; margin-top: 8px;
@@ -735,6 +833,19 @@ body {
 
 <div id="ev-hover"></div>
 
+<!-- Trip Visualization Modal -->
+<div id="trip-viz-overlay" onclick="closeTripViz(event)">
+  <div id="trip-viz-modal">
+    <div class="tviz-header">
+      <div class="tviz-color-bar" id="tviz-color-bar"></div>
+      <div class="tviz-title" id="tviz-title"></div>
+      <button class="tviz-close" onclick="closeTripViz()">✕</button>
+    </div>
+    <div class="tviz-stats" id="tviz-stats"></div>
+    <div class="tviz-body" id="tviz-body"></div>
+  </div>
+</div>
+
 <script>
 'use strict';
 
@@ -1027,6 +1138,7 @@ function renderSidebar() {
         <div class="trip-dot" style="background:${t.color}"></div>
         ${nameHTML}
         <div class="trip-acts">
+          <button class="trip-act-btn" onclick="openTripViz(${t.id})" title="Trip summary"><svg width="13" height="10" viewBox="0 0 13 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 5C1 5 3.2 1.5 6.5 1.5C9.8 1.5 12 5 12 5C12 5 9.8 8.5 6.5 8.5C3.2 8.5 1 5 1 5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="6.5" cy="5" r="1.6" fill="currentColor"/></svg></button>
           <button class="trip-act-btn" onclick="exportTrip(${t.id})" title="Export to CSV">⬇</button>
           <button class="trip-act-btn" onclick="startRename(${t.id})" title="Rename">✏</button>
           <button class="trip-act-btn del" onclick="deleteTrip(${t.id})" title="Delete">✕</button>
@@ -1106,6 +1218,199 @@ function csvCell(val) {
   return (s.includes(',') || s.includes('"') || s.includes('\n'))
     ? '"' + s.replace(/"/g, '""') + '"'
     : s;
+}
+
+// ── TRIP VISUALIZATION ─────────────────────────────────────────────────────────
+function openTripViz(tripId) {
+  const trip = trips.find(t => t.id === tripId);
+  if (!trip) return;
+  const tripEvs = events.filter(e => e.tripId === tripId)
+                        .sort((a, b) => a.start - b.start);
+  if (!tripEvs.length) { alert('This trip has no events to display.'); return; }
+
+  // ── helpers ──
+  const fmtDate      = d => d.toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+  const fmtDateShort = d => d.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
+  const fmtTime      = d => d.toLocaleTimeString(undefined, { hour:'2-digit', minute:'2-digit' });
+  const fmtDist      = m => `${(m / 1609.34).toFixed(0)} mi · ${(m / 1000).toFixed(0)} km`;
+  const fmtDriveTime = s => {
+    const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+    return h > 0 ? `${h}h ${m > 0 ? m + 'min' : ''}`.trim() : `${m}min`;
+  };
+  // Always use local-time day key to avoid UTC timezone shift bugs
+  const isoDay    = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const mapsSearch = q => `https://www.google.com/maps/search/${encodeURIComponent(q)}`;
+  const mapsDir    = (a, b) => `https://www.google.com/maps/dir/${encodeURIComponent(a)}/${encodeURIComponent(b)}`;
+
+  // ── aggregate stats ──
+  let totalDistM = 0, totalDriveSec = 0;
+  for (const ev of tripEvs) {
+    if (ev.category === 'driving') {
+      if (ev.distanceM)      totalDistM    += ev.distanceM;
+      if (ev.drivingSeconds) totalDriveSec += ev.drivingSeconds;
+    }
+  }
+  const firstDay  = new Date(tripEvs[0].start); firstDay.setHours(0,0,0,0);
+  const lastDay   = new Date(tripEvs[tripEvs.length-1].end);
+  const totalDays = Math.ceil((lastDay - firstDay) / (24*60*60*1000));
+
+  // ── Google Maps multi-stop URL ──
+  const waypoints = [];
+  for (const ev of tripEvs) {
+    if (ev.category === 'driving') {
+      if (ev.departure && (waypoints.length === 0 || waypoints[waypoints.length-1] !== ev.departure))
+        waypoints.push(ev.departure);
+      if (ev.arrival) waypoints.push(ev.arrival);
+    }
+  }
+  const uniqueWp = waypoints.filter((w, i) => i === 0 || w !== waypoints[i-1]);
+  const mapsUrl  = uniqueWp.length >= 2
+    ? 'https://www.google.com/maps/dir/' + uniqueWp.map(w => encodeURIComponent(w)).join('/')
+    : null;
+
+  // ── group events by day — multi-day events appear on each day they span ──
+  // entry: { ev, isStart, isEnd }
+  const byDay = new Map();
+  for (const ev of tripEvs) {
+    const startKey = isoDay(ev.start);
+    // Use end - 1ms so an event ending exactly at midnight doesn't bleed into the next day
+    const endMoment = new Date(ev.end.getTime() - 1);
+    const endKey    = isoDay(endMoment);
+
+    // Walk day by day from startKey to endKey (both local-time)
+    const cursor = new Date(ev.start.getFullYear(), ev.start.getMonth(), ev.start.getDate());
+    const stop   = new Date(endMoment.getFullYear(), endMoment.getMonth(), endMoment.getDate());
+    while (cursor <= stop) {
+      const key     = isoDay(cursor);
+      const isStart = key === startKey;
+      const isEnd   = key === endKey;
+      if (!byDay.has(key)) byDay.set(key, []);
+      byDay.get(key).push({ ev, isStart, isEnd });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+
+  // ── render stats bar ──
+  document.getElementById('tviz-stats').innerHTML = [
+    { val: totalDays + (totalDays === 1 ? ' day' : ' days'), lbl: 'Duration' },
+    { val: tripEvs.length,                                    lbl: 'Events' },
+    totalDistM    ? { val: fmtDist(totalDistM),          lbl: 'Total driving distance' } : null,
+    totalDriveSec ? { val: fmtDriveTime(totalDriveSec), lbl: 'Time on the road' }       : null,
+  ].filter(Boolean).map(s =>
+    `<div class="tviz-stat"><div class="tviz-stat-val">${s.val}</div><div class="tviz-stat-lbl">${s.lbl}</div></div>`
+  ).join('');
+
+  // ── render days ──
+  let bodyHtml = '';
+  if (mapsUrl) {
+    bodyHtml += `<a class="tviz-map-btn" href="${mapsUrl}" target="_blank">🗺️ Open full route in Google Maps</a>`;
+  }
+
+  let dayNum = 0;
+  for (const [dayKey, dayEntries] of [...byDay.entries()].sort()) {
+    dayNum++;
+    const dayDate  = new Date(dayKey + 'T12:00:00');
+    const dayDistM = dayEntries
+      .filter(({ ev, isStart }) => ev.category === 'driving' && ev.distanceM && isStart)
+      .reduce((s, { ev }) => s + ev.distanceM, 0);
+
+    bodyHtml += `<div class="tviz-day">
+      <div class="tviz-day-header">
+        <div class="tviz-day-num" style="background:${trip.color}">${dayNum}</div>
+        <div class="tviz-day-label">${fmtDate(dayDate)}</div>
+        ${dayDistM ? `<div class="tviz-day-sublabel">🚗 ${fmtDist(dayDistM)}</div>` : ''}
+      </div>`;
+
+    for (const { ev, isStart, isEnd } of dayEntries) {
+      const cat        = CATS[ev.category] || CATS.misc;
+      const isMultiDay = !isStart || !isEnd;
+
+      // Card style: gradient fades for multi-day events
+      // Fade direction: start-day fades out at bottom (→ white), end-day fades in at top (white →)
+      // Middle days: both ends fade
+      let cardStyle = 'background:#f8fafc;'; // default single-day
+      if (isMultiDay) {
+        if (isStart && !isEnd) {
+          // First day: solid top, fades to white at bottom
+          cardStyle = 'background:linear-gradient(to bottom,#f8fafc 60%,#ffffff);border-bottom:none;border-radius:8px 8px 0 0;';
+        } else if (!isStart && isEnd) {
+          // Last day: white at top, solid bottom
+          cardStyle = 'background:linear-gradient(to bottom,#ffffff,#f8fafc 40%);border-top:none;border-radius:0 0 8px 8px;';
+        } else {
+          // Middle day: white both ends
+          cardStyle = 'background:linear-gradient(to bottom,#ffffff,#f8fafc 30%,#f8fafc 70%,#ffffff);border-top:none;border-bottom:none;border-radius:0;';
+        }
+      }
+
+      // Time / continuation label
+      let timeStr;
+      if (isStart && isEnd) {
+        timeStr = `${fmtTime(ev.start)} – ${fmtTime(ev.end)}`;
+      } else if (isStart) {
+        timeStr = `Starts ${fmtTime(ev.start)} &nbsp;↓ continues…`;
+      } else if (isEnd) {
+        timeStr = `↑ Continued from ${fmtDateShort(ev.start)} · ends ${fmtTime(ev.end)}`;
+      } else {
+        timeStr = `↑ Continues all day · from ${fmtDateShort(ev.start)}`;
+      }
+
+      let evExtra = '';
+
+      // ── Driving ──
+      if (ev.category === 'driving' && (ev.departure || ev.arrival)) {
+        evExtra += `<div class="tviz-route">`;
+        if (ev.departure) evExtra += `<a href="${mapsSearch(ev.departure)}" target="_blank" class="tviz-loc-link">${esc(ev.departure)}</a>`;
+        if (ev.departure && ev.arrival) evExtra += `<span class="tviz-route-arrow">→</span>`;
+        if (ev.arrival)   evExtra += `<a href="${mapsSearch(ev.arrival)}"   target="_blank" class="tviz-loc-link">${esc(ev.arrival)}</a>`;
+        evExtra += `</div><div class="tviz-ev-drive">`;
+        if (ev.distanceM)      evExtra += `<span class="tviz-chip">📏 ${fmtDist(ev.distanceM)}</span>`;
+        if (ev.drivingSeconds) evExtra += `<span class="tviz-chip">⏱ ${fmtDriveTime(ev.drivingSeconds)} on road</span>`;
+        if (ev.departure && ev.arrival)
+          evExtra += `<a href="${mapsDir(ev.departure, ev.arrival)}" target="_blank">🗺 View leg</a>`;
+        evExtra += `</div>`;
+      }
+
+      // ── Sleeping ──
+      if (ev.category === 'sleeping' && ev.sleepingAddress) {
+        evExtra += `<div class="tviz-ev-drive">
+          <span class="tviz-chip blue">📍 ${esc(ev.sleepingAddress)}</span>
+          <a href="${mapsSearch(ev.sleepingAddress)}" target="_blank">View on map</a>
+        </div>`;
+      }
+
+      // ── Sightseeing / transportation → search link from title ──
+      if ((ev.category === 'sightseeing' || ev.category === 'transportation') && ev.title) {
+        evExtra += `<div class="tviz-ev-drive"><a href="${mapsSearch(ev.title)}" target="_blank">📍 Find on map</a></div>`;
+      }
+
+      // ── Description (only on the start day) ──
+      if (ev.description && isStart) {
+        evExtra += `<div class="tviz-ev-desc">${esc(ev.description)}</div>`;
+      }
+
+      bodyHtml += `<div class="tviz-ev" style="${cardStyle}">
+        <div class="tviz-ev-icon">${isStart ? cat.emoji : '↕'}</div>
+        <div class="tviz-ev-body">
+          <div class="tviz-ev-title">${esc(ev.title)}</div>
+          <div class="tviz-ev-time">${timeStr} &nbsp;·&nbsp; ${cat.label}</div>
+          ${evExtra}
+        </div>
+      </div>`;
+    }
+    bodyHtml += `</div>`;
+  }
+
+  // ── populate & show ──
+  document.getElementById('tviz-color-bar').style.background = trip.color;
+  document.getElementById('tviz-title').textContent = trip.name;
+  document.getElementById('tviz-body').innerHTML = bodyHtml;
+  document.getElementById('trip-viz-overlay').classList.add('open');
+  document.getElementById('tviz-body').scrollTop = 0;
+}
+
+function closeTripViz(e) {
+  if (e && e.target !== document.getElementById('trip-viz-overlay')) return;
+  document.getElementById('trip-viz-overlay').classList.remove('open');
 }
 
 function exportTrip(tripId) {
@@ -2244,7 +2549,7 @@ function onDocClick(e) {
 }
 
 function onKeyDown(e) {
-  if (e.key === 'Escape') { closePop(); closeForm(); closeCtxMenu(); }
+  if (e.key === 'Escape') { closePop(); closeForm(); closeCtxMenu(); document.getElementById('trip-viz-overlay').classList.remove('open'); }
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key.toLowerCase() === 'z') {
     e.preventDefault();
