@@ -91,6 +91,62 @@ body {
   transition: background .15s;
 }
 .btn-new-event:hover { background: #fbbf24; }
+/* ── DAY CONTEXT MENU ───────────────────── */
+#day-ctx-menu {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.13), 0 1px 4px rgba(0,0,0,.06);
+  padding: 6px 0;
+  min-width: 220px;
+  font-family: inherit;
+  overflow: hidden;
+}
+.ctx-section-label {
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 14px 3px;
+  font-size: 10px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: #94a3b8;
+  user-select: none;
+}
+.ctx-dot {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; flex-shrink: 0;
+}
+.ctx-item {
+  padding: 7px 14px;
+  font-size: 13px; font-weight: 500; color: #1e293b;
+  cursor: pointer; white-space: nowrap;
+  transition: background .1s;
+}
+.ctx-item:hover { background: #f1f5f9; }
+.ctx-item.ctx-sub { padding-left: 28px; color: #334155; font-size: 12px; }
+.ctx-item.ctx-disabled { color: #94a3b8; cursor: default; font-style: italic; }
+.ctx-item.ctx-disabled:hover { background: none; }
+.ctx-divider { height: 1px; background: #f1f5f9; margin: 5px 0; }
+.ctx-date-header {
+  padding: 8px 14px 6px;
+  font-size: 11px; font-weight: 700; color: #64748b;
+  border-bottom: 1px solid #f1f5f9; margin-bottom: 3px;
+}
+
+/* ── UNDO / REDO FLOATING AREA ──────────── */
+.undo-area {
+  position: fixed; bottom: 24px; right: 24px;
+  display: flex; gap: 8px; z-index: 300;
+}
+.undo-area button {
+  background: #fff; border: 1.5px solid #cbd5e1; color: #94a3b8;
+  padding: 7px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  cursor: not-allowed; white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  transition: all .15s;
+}
+.undo-area button.active {
+  border-color: #64748b; color: #334155; cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,.13);
+}
+.undo-area button.active:hover { background: #f8fafc; color: #0f172a; }
 
 /* ── APP SHELL ──────────────────────────── */
 .shell {
@@ -146,6 +202,9 @@ body {
 .btn-d:hover { background: #fee2e2; }
 
 /* legend removed */
+
+/* ── UNDO TOAST ─────────────────────────── */
+
 
 /* ── MAIN ───────────────────────────────── */
 .main { display: flex; flex: 1; overflow: hidden; min-height: 0; }
@@ -357,10 +416,11 @@ body {
 /* Trip bands */
 .trip-band {
   position: absolute;
-  pointer-events: none; z-index: 1;
+  pointer-events: all; z-index: 1;
   border-radius: 4px;
   border-left-style: solid;
   border-left-width: 3px;
+  cursor: default;
 }
 
 /* Date numbers */
@@ -372,6 +432,7 @@ body {
   width: calc(100% / 7);
 }
 .dnum.today { color: #3b82f6; font-weight: 700; }
+
 
 
 /* Event bars */
@@ -737,6 +798,40 @@ function init() {
     e.preventDefault();
     navigate(e.deltaY > 0 ? 1 : -1);
   }, { passive: false });
+
+  // Right-click inside calendar → day operation menu
+  document.addEventListener('contextmenu', function(e) {
+    if (!e.target.closest('#cal-area')) return; // ignore outside calendar
+    e.preventDefault();
+    const d = dayUnderMouse(e);
+    // Detect trip from band or event bar
+    const band = e.target.closest('.trip-band');
+    const bar  = e.target.closest('.ev-bar');
+    let tripId;
+    if (band) {
+      const raw = band.dataset.tripId;
+      tripId = raw !== '' ? parseInt(raw) : null;
+    } else if (bar) {
+      const evId = parseInt(bar.dataset.id);
+      const ev = events.find(ev => ev.id === evId);
+      tripId = ev ? ev.tripId : undefined;
+    }
+
+    if (tripId === undefined || !d) {
+      // Nothing actionable — show hint
+      const menu = document.getElementById('day-ctx-menu');
+      menu.innerHTML = '<div class="ctx-item ctx-disabled">Right-click a trip band or event to extend or compress it</div>';
+      const mw = 300;
+      const mx = (e.clientX + 4 + mw > window.innerWidth) ? e.clientX - mw - 4 : e.clientX + 4;
+      menu.style.cssText = `display:block; position:fixed; z-index:9999; left:${mx}px; top:${e.clientY+4}px; min-width:${mw}px;`;
+      return;
+    }
+    const iso = d.getFullYear() + '-' +
+      String(d.getMonth()+1).padStart(2,'0') + '-' +
+      String(d.getDate()).padStart(2,'0');
+    showDayMenu(e, iso, tripId);
+  });
+
   document.addEventListener('click', onDocClick);
   document.addEventListener('keydown', onKeyDown);
 }
@@ -1106,7 +1201,9 @@ function parseImportCSV(text) {
 
   for (const row of dataRows) {
     const startStr = get(row, 'start'), endStr = get(row, 'end');
-    const start = new Date(startStr), end = new Date(endStr);
+    // Safari requires ISO 8601 with 'T' — normalize "YYYY-MM-DD HH:MM" → "YYYY-MM-DDTHH:MM"
+    const parseDate = s => new Date(s.trim().replace(' ', 'T'));
+    const start = parseDate(startStr), end = parseDate(endStr);
     if (!startStr || !endStr || isNaN(start) || isNaN(end)) { skipped++; continue; }
 
     const num = (key) => { const v = get(row, key); return v !== '' ? parseFloat(v) : null; };
@@ -1284,11 +1381,11 @@ function renderCal() {
 
     // Trip lane bands (colored background strips per trip)
     let bands = '';
-    for (const { color, laneStart, laneCount: lc, bandLeft, bandRight } of tripBands) {
+    for (const { tripId, color, laneStart, laneCount: lc, bandLeft, bandRight } of tripBands) {
       const bTop = DATE_ROW + LANE_TOP + laneStart * (LANE_H + LANE_GAP) - 3;
       const bH   = lc * (LANE_H + LANE_GAP) - LANE_GAP + 6;
       const bW   = (bandRight - bandLeft).toFixed(3);
-      bands += `<div class="trip-band" style="top:${bTop}px;height:${bH}px;left:${bandLeft.toFixed(3)}%;width:${bW}%;background:${hexToRgba(color,.07)};border-left-color:${color}"></div>`;
+      bands += `<div class="trip-band" data-trip-id="${tripId ?? ''}" style="top:${bTop}px;height:${bH}px;left:${bandLeft.toFixed(3)}%;width:${bW}%;background:${hexToRgba(color,.07)};border-left-color:${color}"></div>`;
     }
 
     // Day columns + date numbers
@@ -1300,6 +1397,7 @@ function renderCal() {
       const W     = (100 / 7).toFixed(3);
       const today = isToday(dd);
       const wkd   = d >= 5 ? ' weekend' : '';
+      const iso = dd.toISOString().slice(0,10);
       dcols += `<div class="dcol${wkd}" style="left:${L}%;width:${W}%"></div>`;
       dnums += `<div class="dnum${today?' today':''}" style="left:calc(${L}% + 3px)">${dd.getDate()}</div>`;
       // Night zones: midnight→7am and 9pm→midnight
@@ -1377,7 +1475,10 @@ function timelineDblClick(e, weekIdx) {
     defaultStart.setHours(9, 0, 0, 0);
   }
 
-  openForm(null, defaultStart);
+  // Pre-select the trip whose band was double-clicked
+  const band = e.target.closest('.trip-band');
+  const bandTripId = band && band.dataset.tripId !== '' ? parseInt(band.dataset.tripId) : null;
+  openForm(null, defaultStart, bandTripId);
 }
 
 function positionOverlay() {
@@ -1393,7 +1494,7 @@ function positionOverlay() {
   overlay.style.height = (bottom - top) + 'px';
 }
 
-function openForm(evObj, defaultDate) {
+function openForm(evObj, defaultDate, defaultTripId) {
   const overlay = document.getElementById('form-overlay');
   positionOverlay();
   overlay.style.display = '';
@@ -1444,7 +1545,7 @@ function openForm(evObj, defaultDate) {
     document.getElementById('btn-del').style.display = 'none';
     document.getElementById('f-title').value = '';
     document.getElementById('f-cat').value   = 'driving';
-    document.getElementById('f-trip').value  = lastTripId ?? '';
+    document.getElementById('f-trip').value  = defaultTripId ?? lastTripId ?? '';
     const now = defaultDate ? snap15(defaultDate) : (() => { const d = new Date(); d.setHours(9, 0, 0, 0); return d; })();
     setStartFields(now);
     document.getElementById('f-dur-h').value = 1;
@@ -1879,16 +1980,24 @@ function submitForm() {
   } else {
     savedEv = { id: nextEvId++, title, category: cat, tripId, start, end, description: desc, ...drivingFields, linkedNextId: null };
     events.push(savedEv);
+    closeForm(); render();
+    if (savedEv?.category === 'driving') handleDrivingLinks(savedEv);
+    recordUndo('add', savedEv);
+    return;
   }
   closeForm(); render();
   if (savedEv?.category === 'driving') handleDrivingLinks(savedEv);
 }
 
 function deleteEditingEvent() {
-  if (editingId === null || !confirm('Delete this event?')) return;
+  if (editingId === null) return;
+  const ev = events.find(e => e.id === editingId);
+  if (!ev) return;
+  const snap = { ...ev };
   clearLinksTo(editingId);
   events = events.filter(e => e.id !== editingId);
   closeForm(); render();
+  recordUndo('delete', snap);
 }
 
 // ── POPOVER ────────────────────────────────────────────────────────────────────
@@ -1976,10 +2085,13 @@ function editFromPop() {
 }
 
 function deleteFromPop() {
-  if (!confirm('Delete this event?')) return;
+  const ev = events.find(e => e.id === popEvId);
+  if (!ev) return;
+  const snap = { ...ev };
   clearLinksTo(popEvId);
   events = events.filter(e => e.id !== popEvId);
   closePop(); render();
+  recordUndo('delete', snap);
 }
 
 // ── HOVER OVERLAY ──────────────────────────────────────────────────────────────
@@ -2023,6 +2135,7 @@ function hideBarHover() {
 
 // ── DRAG ───────────────────────────────────────────────────────────────────────
 function barDown(e, evId) {
+  if (e.button !== 0) return; // ignore right-click / middle-click
   e.preventDefault(); e.stopPropagation();
   hideBarHover();
   const ev = events.find(item => item.id === evId);
@@ -2102,7 +2215,14 @@ function onDocClick(e) {
 }
 
 function onKeyDown(e) {
-  if (e.key === 'Escape') { closePop(); closeForm(); }
+  if (e.key === 'Escape') { closePop(); closeForm(); closeCtxMenu(); }
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    if (e.shiftKey) { redoLastAction(); }
+    else if (lastUndoable) { undoLastAction(); }
+    else if (lastRedoable) { redoLastAction(); } // nothing to undo → redo
+  }
 }
 
 // ── UTIL ───────────────────────────────────────────────────────────────────────
@@ -2110,8 +2230,203 @@ function esc(s) {
   return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ── UNDO / REDO ────────────────────────────────────────────────────────────────
+let lastUndoable = null; // { type, snapshot | eventsSnapshot }
+let lastRedoable = null;
+
+function deepCopyEvents() {
+  return events.map(e => ({ ...e, start: new Date(e.start), end: new Date(e.end) }));
+}
+
+function recordUndo(type, snapshot) {
+  lastUndoable = {
+    type,
+    snapshot: { ...snapshot, start: new Date(snapshot.start), end: new Date(snapshot.end) },
+  };
+  lastRedoable = null;
+  refreshUndoBtns();
+}
+
+// Records undo for day-ops: stores full events snapshot + the op params for redo
+function recordDayOpUndo(op, date) {
+  lastUndoable = { type: 'day-op', op, date, eventsSnapshot: deepCopyEvents() };
+  lastRedoable = null;
+  refreshUndoBtns();
+}
+
+function refreshUndoBtns() {
+  const btnUndo = document.getElementById('btn-undo');
+  const btnRedo = document.getElementById('btn-redo');
+  if (!btnUndo || !btnRedo) return;
+  if (lastUndoable) { btnUndo.classList.add('active'); btnUndo.disabled = false; }
+  else              { btnUndo.classList.remove('active'); btnUndo.disabled = true; }
+  if (lastRedoable) { btnRedo.classList.add('active'); btnRedo.disabled = false; }
+  else              { btnRedo.classList.remove('active'); btnRedo.disabled = true; }
+}
+
+function undoLastAction() {
+  if (!lastUndoable) return;
+  const u = lastUndoable;
+  if (u.type === 'add') {
+    clearLinksTo(u.snapshot.id);
+    events = events.filter(e => e.id !== u.snapshot.id);
+  } else if (u.type === 'delete') {
+    events.push(u.snapshot);
+  } else if (u.type === 'day-op') {
+    // Save current state for redo, then restore pre-op snapshot
+    lastRedoable = { type: 'day-op', op: u.op, date: u.date, eventsSnapshot: deepCopyEvents() };
+    events = u.eventsSnapshot.map(e => ({ ...e, start: new Date(e.start), end: new Date(e.end) }));
+    lastUndoable = null;
+    refreshUndoBtns();
+    save(); render();
+    return;
+  }
+  lastRedoable = { type: u.type, snapshot: u.snapshot };
+  lastUndoable = null;
+  refreshUndoBtns();
+  save(); render();
+}
+
+function redoLastAction() {
+  if (!lastRedoable) return;
+  const r = lastRedoable;
+  if (r.type === 'add') {
+    events.push(r.snapshot);
+  } else if (r.type === 'delete') {
+    clearLinksTo(r.snapshot.id);
+    events = events.filter(e => e.id !== r.snapshot.id);
+  } else if (r.type === 'day-op') {
+    // Save current state for undo, then restore post-op snapshot
+    lastUndoable = { type: 'day-op', op: r.op, date: r.date, eventsSnapshot: deepCopyEvents() };
+    events = r.eventsSnapshot.map(e => ({ ...e, start: new Date(e.start), end: new Date(e.end) }));
+    lastRedoable = null;
+    refreshUndoBtns();
+    save(); render();
+    return;
+  }
+  lastUndoable = { type: r.type, snapshot: r.snapshot };
+  lastRedoable = null;
+  refreshUndoBtns();
+  save(); render();
+}
+
+// ── DAY CONTEXT MENU ─────────────────────────────────────────────────────────
+let ctxMenuDate = null;
+
+function showDayMenu(e, isoDate, scopeTripId) {
+  e.stopPropagation();
+
+  // Parse the clicked date
+  const parts = isoDate.split('-');
+  ctxMenuDate = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+
+  const dateLabel = ctxMenuDate.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
+  let html = `<div class="ctx-date-header">${dateLabel}</div>`;
+
+  if (scopeTripId !== undefined) {
+    // Scoped to a specific trip (right-clicked on its band)
+    if (scopeTripId === null) {
+      html += '<div class="ctx-section-label"><span class="ctx-dot" style="background:#94a3b8"></span>Unassigned events</div>';
+    } else {
+      const t = trips.find(t => t.id === scopeTripId);
+      if (t) html += `<div class="ctx-section-label"><span class="ctx-dot" style="background:${t.color}"></span>${esc(t.name)}</div>`;
+    }
+    const id = scopeTripId === null ? 'null' : scopeTripId;
+    html += `<div class="ctx-item" onclick="executeDayOp('extend',${id})">📅 Extend by a day</div>`;
+    html += `<div class="ctx-item" onclick="executeDayOp('compress',${id})">🗜️ Compress by a day</div>`;
+  } else {
+    // No scope — show all trips
+    const tripsWithEvents = trips.filter(t => events.some(ev => ev.tripId === t.id));
+    const hasUnassigned   = events.some(ev => ev.tripId == null);
+    const totalGroups     = tripsWithEvents.length + (hasUnassigned ? 1 : 0);
+    if (totalGroups === 0) {
+      html += '<div class="ctx-item ctx-disabled">No trips found</div>';
+    } else {
+      for (const t of tripsWithEvents) {
+        html += `<div class="ctx-section-label"><span class="ctx-dot" style="background:${t.color}"></span>${esc(t.name)}</div>`;
+        html += `<div class="ctx-item ctx-sub" onclick="executeDayOp('extend',${t.id})">📅 Extend by a day</div>`;
+        html += `<div class="ctx-item ctx-sub" onclick="executeDayOp('compress',${t.id})">🗜️ Compress by a day</div>`;
+      }
+      if (hasUnassigned) {
+        html += '<div class="ctx-section-label"><span class="ctx-dot" style="background:#94a3b8"></span>Unassigned</div>';
+        html += '<div class="ctx-item ctx-sub" onclick="executeDayOp(\'extend\',null)">📅 Extend by a day</div>';
+        html += '<div class="ctx-item ctx-sub" onclick="executeDayOp(\'compress\',null)">🗜️ Compress by a day</div>';
+      }
+      if (totalGroups > 1) {
+        html += '<div class="ctx-divider"></div>';
+        html += '<div class="ctx-item" onclick="executeDayOp(\'extend\',\'all\')">📅 Extend ALL trips by a day</div>';
+        html += '<div class="ctx-item" onclick="executeDayOp(\'compress\',\'all\')">🗜️ Compress ALL trips by a day</div>';
+      }
+    }
+  }
+
+  const menu = document.getElementById('day-ctx-menu');
+  menu.innerHTML = html;
+
+  // Position near cursor, stay on screen
+  const mw = 240, mh = menu.childElementCount * 36 + 16;
+  const mx = (e.clientX + 4 + mw > window.innerWidth)  ? e.clientX - mw - 4 : e.clientX + 4;
+  const my = (e.clientY + 4 + mh > window.innerHeight) ? e.clientY - mh - 4 : e.clientY + 4;
+  menu.style.cssText = `display:block; position:fixed; z-index:9999; left:${mx}px; top:${my}px; min-width:${mw}px;`;
+}
+
+function closeCtxMenu() {
+  document.getElementById('day-ctx-menu').style.display = 'none';
+}
+
+function executeDayOp(op, tripId) {
+  closeCtxMenu();
+  if (!ctxMenuDate) return;
+  const date = ctxMenuDate;
+  recordDayOpUndo(op, date);  // snapshot BEFORE changes
+
+  const boundary = new Date(date); boundary.setHours(0,0,0,0);
+  const nextDay  = new Date(boundary.getTime() + DAY);
+
+  // tripId === 'all' → all events; null → unassigned only; number → that trip
+  const affected = ev => {
+    if (tripId === 'all') return true;
+    if (tripId === null)  return ev.tripId == null;
+    return ev.tripId === tripId;
+  };
+
+  if (op === 'extend') {
+    for (const ev of events) {
+      if (!affected(ev)) continue;
+      if (ev.start >= boundary) {
+        ev.start = new Date(ev.start.getTime() + DAY);
+        ev.end   = new Date(ev.end.getTime()   + DAY);
+      }
+    }
+  } else if (op === 'compress') {
+    for (const ev of events) {
+      if (!affected(ev)) continue;
+      if (ev.start >= nextDay) {
+        ev.start = new Date(ev.start.getTime() - DAY);
+        ev.end   = new Date(ev.end.getTime()   - DAY);
+      }
+    }
+  }
+
+  save(); render();
+}
+
+// Close context menu on left-click outside it
+document.addEventListener('click', e => {
+  if (e.button !== 0) return;
+  const menu = document.getElementById('day-ctx-menu');
+  if (menu && menu.style.display !== 'none' && !menu.contains(e.target)) closeCtxMenu();
+});
+
 // ── INIT ───────────────────────────────────────────────────────────────────────
 init();
 </script>
+
+
+<div id="day-ctx-menu" class="day-ctx-menu" style="display:none"></div>
+<div class="undo-area" id="undo-area">
+  <button id="btn-undo" onclick="undoLastAction()" title="Cancel last add or delete" disabled>↩ Cancel</button>
+  <button id="btn-redo" onclick="redoLastAction()" title="Redo (undo the cancel)" disabled>↪ Redo</button>
+</div>
 </body>
 </html>
