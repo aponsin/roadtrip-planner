@@ -101,20 +101,25 @@ body {
   overflow: hidden;
 }
 
-/* ── FORM PANEL ─────────────────────────── */
+/* ── FORM MODAL ─────────────────────────── */
+.form-overlay {
+  position: fixed; z-index: 200;
+  background: rgba(15,23,42,.45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 190px;
+  opacity: 1; transition: opacity .18s ease;
+}
+.form-overlay.closed {
+  opacity: 0; pointer-events: none;
+}
 .form-panel {
   background: #fff;
-  border-bottom: 2px solid var(--border);
-  flex-shrink: 0;
-  overflow: hidden;
-  max-height: 420px;
-  transition: max-height .22s ease, padding .22s ease, border-bottom-color .22s;
-  padding: 14px 20px;
-}
-.form-panel.closed {
-  max-height: 0;
-  padding-top: 0; padding-bottom: 0;
-  border-bottom-color: transparent;
+  border-radius: 12px;
+  box-shadow: 0 8px 40px rgba(15,23,42,.18);
+  padding: 22px 24px 18px;
+  width: min(640px, 96%);
+  max-height: calc(100% - 60px);
+  overflow-y: auto;
 }
 
 .form-head { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 10px; }
@@ -140,15 +145,7 @@ body {
 .btn-d { background: #fef2f2; color: #dc2626; border: 1.5px solid #fecaca; }
 .btn-d:hover { background: #fee2e2; }
 
-/* ── LEGEND ─────────────────────────────── */
-.legend {
-  display: flex; gap: 10px; flex-wrap: wrap;
-  padding: 7px 16px;
-  background: #fff; border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.leg-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #475569; font-weight: 500; }
-.leg-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+/* legend removed */
 
 /* ── MAIN ───────────────────────────────── */
 .main { display: flex; flex: 1; overflow: hidden; min-height: 0; }
@@ -437,11 +434,51 @@ body {
 .pop-route-stat { color: var(--muted); }
 .pop-actions { display: flex; gap: 7px; }
 
+/* ── EVENT LINK INDICATORS ──────────────── */
+.ev-bar.link-src::after {
+  content: '⛓'; position: absolute; right: 3px; bottom: 2px;
+  font-size: 8px; opacity: .65; pointer-events: none; line-height: 1;
+}
+.ev-bar.link-dst::before {
+  content: '⛓'; position: absolute; left: 3px; bottom: 2px;
+  font-size: 8px; opacity: .65; pointer-events: none; line-height: 1;
+}
+.link-badge {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 5px 9px; border-radius: 6px; font-size: 11px; font-weight: 600;
+}
+.link-badge.src { background: #f0fdf4; border: 1px solid #86efac; color: #166534; }
+.link-badge.dst { background: #eff6ff; border: 1px solid #93c5fd; color: #1e3a8a; }
+.link-badge button {
+  background: none; border: 1px solid currentColor; border-radius: 4px;
+  padding: 1px 6px; font-size: 10px; cursor: pointer; font-weight: 700;
+  opacity: .7; margin-left: auto;
+}
+.link-badge button:hover { opacity: 1; background: rgba(0,0,0,.06); }
+
 /* ── DRIVING FIELDS ──────────────────────── */
-.addr-wrap { display: flex; gap: 5px; align-items: center; }
+.addr-wrap { display: flex; gap: 5px; align-items: center; position: relative; }
 .addr-link { font-size: 15px; text-decoration: none; flex-shrink: 0; opacity: .45; transition: opacity .15s; }
 .addr-link:hover { opacity: 1; }
 .addr-link.dim { opacity: .18; pointer-events: none; }
+
+/* ── AUTOCOMPLETE ────────────────────────── */
+.ac-dropdown {
+  position: absolute; top: calc(100% + 3px); left: 0; right: 0;
+  background: #fff; border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 6px 20px rgba(15,23,42,.12);
+  z-index: 400; max-height: 220px; overflow-y: auto;
+  list-style: none; margin: 0; padding: 4px 0;
+}
+.ac-item {
+  padding: 8px 12px; cursor: pointer; font-size: 12px;
+  display: flex; flex-direction: column; gap: 1px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.ac-item:last-child { border-bottom: none; }
+.ac-item:hover, .ac-item.active { background: #f0f9ff; }
+.ac-item-name { font-weight: 600; color: #1e293b; }
+.ac-item-detail { color: #64748b; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .route-chip { display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 5px 10px; background: #f8fafc; border: 1px solid var(--border); border-radius: 7px; font-size: 12px; }
 .route-chip a { color: var(--accent); text-decoration: none; font-weight: 600; }
 .route-chip a:hover { text-decoration: underline; }
@@ -477,8 +514,9 @@ body {
 <!-- ── SHELL ──────────────────────────────────────────────── -->
 <div class="shell">
 
-  <!-- Form Panel -->
-  <div id="form-panel" class="form-panel closed">
+  <!-- Form Modal (injected into cal-area at runtime, see openForm) -->
+  <div id="form-overlay" class="form-overlay closed" onclick="onOverlayClick(event)" style="display:none">
+  <div id="form-panel" class="form-panel">
     <div class="form-head" id="form-head">New Event</div>
     <div class="form-row">
       <div class="ff wide">
@@ -492,6 +530,7 @@ body {
           <option value="working">💼 Working</option>
           <option value="sightseeing">📸 Sightseeing</option>
           <option value="sleeping">🌙 Sleeping</option>
+          <option value="transportation">⛵ Transportation</option>
           <option value="blocked">🔒 Blocked Time</option>
           <option value="misc">✨ Miscellaneous</option>
         </select>
@@ -567,16 +606,19 @@ body {
         <label>Distance &amp; drive time</label>
         <div id="route-result"><button class="btn btn-g" onclick="fetchRoute()" style="padding:5px 10px;font-size:12px">↗ Get route</button></div>
       </div>
+      <!-- Link status (full-width, shown when linked) -->
+      <div id="link-status-row" style="width:100%;display:none;padding-top:2px">
+        <div id="link-src-badge"  class="link-badge src" style="display:none"></div>
+        <div id="link-dst-badge"  class="link-badge dst" style="display:none"></div>
+      </div>
     </div>
     <div class="form-actions">
       <button class="btn btn-p" onclick="submitForm()">Save Event</button>
       <button class="btn btn-g" onclick="closeForm()">Cancel</button>
       <button class="btn btn-d" id="btn-del" onclick="deleteEditingEvent()" style="display:none">Delete</button>
     </div>
-  </div>
-
-  <!-- Legend -->
-  <div class="legend" id="legend"></div>
+  </div><!-- /form-panel -->
+  </div><!-- /form-overlay -->
 
   <!-- Main layout -->
   <div class="main">
@@ -630,12 +672,13 @@ body {
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
 const CATS = {
-  driving:     { label:'Driving',      emoji:'🚗', color:'#92400e', bg:'#fef3c7', border:'#d97706' },
-  working:     { label:'Working',      emoji:'💼', color:'#1e3a8a', bg:'#dbeafe', border:'#3b82f6' },
-  sightseeing: { label:'Sightseeing',  emoji:'📸', color:'#064e3b', bg:'#d1fae5', border:'#10b981' },
-  sleeping:    { label:'Sleeping',     emoji:'🌙', color:'#4c1d95', bg:'#ede9fe', border:'#8b5cf6' },
-  blocked:     { label:'Blocked Time', emoji:'🔒', color:'#1f2937', bg:'#e5e7eb', border:'#6b7280' },
-  misc:        { label:'Misc.',        emoji:'✨', color:'#831843', bg:'#fce7f3', border:'#ec4899' },
+  driving:        { label:'Driving',        emoji:'🚗', color:'#92400e', bg:'#fef3c7', border:'#d97706' },
+  working:        { label:'Working',        emoji:'💼', color:'#1e3a8a', bg:'#dbeafe', border:'#3b82f6' },
+  sightseeing:    { label:'Sightseeing',    emoji:'📸', color:'#064e3b', bg:'#d1fae5', border:'#10b981' },
+  sleeping:       { label:'Sleeping',       emoji:'🌙', color:'#4c1d95', bg:'#ede9fe', border:'#8b5cf6' },
+  transportation: { label:'Transportation', emoji:'⛵', color:'#0c4a6e', bg:'#e0f2fe', border:'#0ea5e9' },
+  blocked:        { label:'Blocked Time',   emoji:'🔒', color:'#1f2937', bg:'#e5e7eb', border:'#6b7280' },
+  misc:           { label:'Misc.',          emoji:'✨', color:'#831843', bg:'#fce7f3', border:'#ec4899' },
 };
 
 const TRIP_COLORS = [
@@ -674,9 +717,17 @@ function init() {
   loadState();
   if (!viewStart) viewStart = monday(new Date());
   buildTimeSelect();
-  renderLegend();
   renderSidebar();
   render();
+  window.addEventListener('resize', () => {
+    if (!document.getElementById('form-overlay').classList.contains('closed')) positionOverlay();
+  });
+
+  // Scroll wheel on calendar → navigate weeks
+  document.getElementById('cal-area').addEventListener('wheel', e => {
+    e.preventDefault();
+    navigate(e.deltaY > 0 ? 1 : -1);
+  }, { passive: false });
   document.addEventListener('click', onDocClick);
   document.addEventListener('keydown', onKeyDown);
 }
@@ -703,7 +754,48 @@ function loadState() {
     nextEvId   = d.nextEvId   || 1;
     viewStart  = d.viewStart  ? new Date(d.viewStart) : null;
     events     = (d.events || []).map(e => ({ ...e, start: new Date(e.start), end: new Date(e.end) }));
+    migrateLinks();
   } catch (_) {}
+}
+
+// Auto-link consecutive driving events within the same trip that have no link yet.
+// Runs once on load so pre-existing events get connected automatically.
+function migrateLinks() {
+  const tripIds = [...new Set(events.filter(e => e.tripId != null && e.category === 'driving').map(e => e.tripId))];
+  let changed = false;
+  for (const tid of tripIds) {
+    const drivs = events
+      .filter(e => e.tripId === tid && e.category === 'driving')
+      .sort((a, b) => a.start - b.start);
+    for (let i = 0; i < drivs.length - 1; i++) {
+      const a = drivs[i], b = drivs[i + 1];
+      // Only auto-link if a has no explicit link yet (undefined = never saved with this feature)
+      if (a.linkedNextId === undefined) {
+        a.linkedNextId = null; // normalise first
+        if (a.arrival) {
+          // Link if b isn't already a destination for someone else
+          const alreadyLinked = events.some(e => e.linkedNextId === b.id);
+          if (!alreadyLinked) {
+            a.linkedNextId = b.id;
+            if (!b.departure) b.departure = a.arrival;
+            changed = true;
+          }
+        }
+      }
+      // Normalise any remaining undefined linkedNextId
+      if (a.linkedNextId === undefined) a.linkedNextId = null;
+    }
+    // Normalise last event
+    if (drivs.length) {
+      const last = drivs[drivs.length - 1];
+      if (last.linkedNextId === undefined) last.linkedNextId = null;
+    }
+  }
+  // Normalise non-driving events too
+  for (const e of events) {
+    if (e.linkedNextId === undefined) e.linkedNextId = null;
+  }
+  if (changed) save();
 }
 
 // ── DATE UTILS ─────────────────────────────────────────────────────────────────
@@ -903,7 +995,7 @@ const CSV_HEADERS = [
   'trip_name','trip_color',
   'title','category','start','end','description',
   'departure','arrival','distance_m','driving_seconds','time_on_road_h',
-  'sleeping_address',
+  'sleeping_address','event_ref','linked_next_ref',
 ];
 
 function csvCell(val) {
@@ -919,6 +1011,10 @@ function exportTrip(tripId) {
   const tripEvs = events.filter(e => e.tripId === tripId);
   if (!tripEvs.length) { alert('This trip has no events to export.'); return; }
 
+  // Build a stable per-export ref map so linkedNextId can survive import
+  const refMap = {};
+  tripEvs.forEach((ev, i) => refMap[ev.id] = i + 1);
+
   const rows = tripEvs.map(ev => [
     trip.name, trip.color,
     ev.title, ev.category,
@@ -927,6 +1023,8 @@ function exportTrip(tripId) {
     ev.departure || '', ev.arrival || '',
     ev.distanceM ?? '', ev.drivingSeconds ?? '', ev.timeOnRoadH ?? '',
     ev.sleepingAddress || '',
+    refMap[ev.id],                                           // event_ref (row index)
+    ev.linkedNextId != null ? (refMap[ev.linkedNextId] ?? '') : '',  // linked_next_ref
   ].map(csvCell).join(','));
 
   const csv  = [CSV_HEADERS.join(','), ...rows].join('\r\n');
@@ -993,15 +1091,26 @@ function parseImportCSV(text) {
   trips.push({ id: newTripId, name: tripName, color: tripColor, visible: true });
 
   let imported = 0, skipped = 0;
+  const refToId = {};    // event_ref string → new event id
+  const linkQueue = [];  // { evId, linkedRef } to resolve after all events created
+  const hasLinkCol = dataRows.length > 0 && get(dataRows[0], 'linked_next_ref') !== undefined;
+
   for (const row of dataRows) {
     const startStr = get(row, 'start'), endStr = get(row, 'end');
     const start = new Date(startStr), end = new Date(endStr);
     if (!startStr || !endStr || isNaN(start) || isNaN(end)) { skipped++; continue; }
 
     const num = (key) => { const v = get(row, key); return v !== '' ? parseFloat(v) : null; };
+    const newId = nextEvId++;
+    const ref = get(row, 'event_ref');
+    if (ref) refToId[ref] = newId;
+
+    // Queue link restoration if this row has a linked_next_ref value
+    const lnkRef = get(row, 'linked_next_ref');
+    if (lnkRef) linkQueue.push({ evId: newId, linkedRef: lnkRef });
+
     events.push({
-      id:             nextEvId++,
-      tripId:         newTripId,
+      id: newId, tripId: newTripId,
       title:          get(row, 'title')    || 'Untitled',
       category:       get(row, 'category') || 'misc',
       start, end,
@@ -1012,8 +1121,32 @@ function parseImportCSV(text) {
       drivingSeconds: num('driving_seconds'),
       timeOnRoadH:    num('time_on_road_h'),
       sleepingAddress: get(row, 'sleeping_address'),
+      linkedNextId:   null,
     });
     imported++;
+  }
+
+  // Restore links from explicit linked_next_ref column (preserves disconnects)
+  if (hasLinkCol) {
+    for (const { evId, linkedRef } of linkQueue) {
+      const targetId = refToId[linkedRef];
+      if (targetId) {
+        const ev = events.find(e => e.id === evId);
+        if (ev) ev.linkedNextId = targetId;
+      }
+    }
+  } else {
+    // Legacy CSV (no linked_next_ref): fall back to heuristic auto-linking
+    const tripDrivingEvs = events
+      .filter(e => e.tripId === newTripId && e.category === 'driving')
+      .sort((a, b) => a.start - b.start);
+    for (let i = 0; i < tripDrivingEvs.length - 1; i++) {
+      const a = tripDrivingEvs[i], b = tripDrivingEvs[i + 1];
+      if (a.arrival && (!b.departure || b.departure === a.arrival)) {
+        a.linkedNextId = b.id;
+        b.departure    = a.arrival;
+      }
+    }
   }
 
   save(); renderSidebar(); render();
@@ -1040,7 +1173,7 @@ function evVisible(ev) {
 // ── SEGMENTS ──────────────────────────────────────────────────────────────────
 function segments(ev) {
   const segs = [];
-  for (let w = 0; w < 6; w++) {
+  for (let w = 0; w < 10; w++) {
     const ws = new Date(viewStart.getTime() + w * WK);
     const we = new Date(ws.getTime() + WK);
     if (ev.start >= we || ev.end <= ws) continue;
@@ -1085,7 +1218,7 @@ function render() {
 }
 
 function updatePeriodLabel() {
-  const end = addDays(viewStart, 41);
+  const end = addDays(viewStart, 69);
   document.getElementById('period-lbl').textContent =
     `${fmt(viewStart)} – ${fmt(end)}, ${end.getFullYear()}`;
   const p = n => String(n).padStart(2,'0');
@@ -1098,7 +1231,7 @@ function renderCal() {
   const now  = new Date();
   let html   = '';
 
-  for (let w = 0; w < 6; w++) {
+  for (let w = 0; w < 10; w++) {
     const ws = new Date(viewStart.getTime() + w * WK);
     const we = new Date(ws.getTime() + WK);
     const { segs, laneCount } = weekLanes(w);
@@ -1134,14 +1267,16 @@ function renderCal() {
 
     // Event bars
     let bars = '';
+    const linkDstIds = new Set(events.map(e => e.linkedNextId).filter(Boolean));
     for (const { ev, left, width, lane, isStart, isEnd } of segs) {
       const cat  = CATS[ev.category] || CATS.misc;
       const top  = DATE_ROW + LANE_TOP + lane * (LANE_H + LANE_GAP);
       const tl   = isStart ? '5px' : '0';
       const tr   = isEnd   ? '5px' : '0';
       const drag = dragState?.eventId === ev.id ? ' dragging' : '';
+      const linkCls = (ev.linkedNextId ? ' link-src' : '') + (linkDstIds.has(ev.id) ? ' link-dst' : '');
 
-      bars += `<div class="ev-bar${drag}" data-id="${ev.id}"
+      bars += `<div class="ev-bar${drag}${linkCls}" data-id="${ev.id}"
         style="left:calc(${left.toFixed(3)}% + 2px);width:calc(${width.toFixed(3)}% - 4px);top:${top}px;height:${LANE_H}px;background:${cat.bg};border:1.5px ${ev.tripId == null ? 'dashed' : 'solid'} ${cat.border};color:${cat.color};border-radius:${tl} ${tr} ${tr} ${tl}"
         onmousedown="barDown(event,${ev.id})"
         ondblclick="closePop();openForm(events.find(e=>e.id===${ev.id}))"
@@ -1191,9 +1326,25 @@ function timelineDblClick(e, weekIdx) {
   openForm(null, defaultStart);
 }
 
+function positionOverlay() {
+  const overlay = document.getElementById('form-overlay');
+  const r = document.getElementById('cal-area').getBoundingClientRect();
+  const top    = Math.max(0, r.top);
+  const left   = Math.max(0, r.left);
+  const bottom = Math.min(window.innerHeight, r.bottom);
+  const right  = Math.min(window.innerWidth,  r.right);
+  overlay.style.top    = top  + 'px';
+  overlay.style.left   = left + 'px';
+  overlay.style.width  = (right - left) + 'px';
+  overlay.style.height = (bottom - top) + 'px';
+}
+
 function openForm(evObj, defaultDate) {
-  const panel = document.getElementById('form-panel');
-  panel.classList.remove('closed');
+  const overlay = document.getElementById('form-overlay');
+  positionOverlay();
+  overlay.style.display = '';
+  overlay.classList.remove('closed');
+  setupAddressAutocomplete();
   refreshTripSelect();
 
   routeData = null;
@@ -1220,6 +1371,7 @@ function openForm(evObj, defaultDate) {
     // Driving fields
     const isDriving = evObj.category === 'driving';
     document.getElementById('driving-fields').style.display = isDriving ? '' : 'none';
+    if (isDriving) { updateLinkStatusBadges(evObj.id); } else { document.getElementById('link-status-row').style.display = 'none'; }
     if (isDriving) {
       document.getElementById('f-departure').value = evObj.departure || '';
       document.getElementById('f-arrival').value   = evObj.arrival   || '';
@@ -1247,7 +1399,19 @@ function openForm(evObj, defaultDate) {
     // New events default to driving — show driving fields, hide sleeping
     document.getElementById('driving-fields').style.display  = '';
     document.getElementById('sleeping-fields').style.display = 'none';
-    document.getElementById('f-departure').value = '';
+    document.getElementById('link-status-row').style.display = 'none';
+    document.getElementById('link-src-badge').style.display  = 'none';
+    document.getElementById('link-dst-badge').style.display  = 'none';
+    // Pre-fill departure from the previous driving event in the same trip (if it has an arrival)
+    let prefillDep = '';
+    if (lastTripId) {
+      const now2 = defaultDate || new Date();
+      const prevDriving = events
+        .filter(e => e.tripId === lastTripId && e.category === 'driving' && e.end <= now2)
+        .sort((a, b) => b.end - a.end)[0];
+      if (prevDriving?.arrival) prefillDep = prevDriving.arrival;
+    }
+    document.getElementById('f-departure').value = prefillDep;
     document.getElementById('f-arrival').value   = '';
     updateAddrLink('departure'); updateAddrLink('arrival');
     document.getElementById('route-result').innerHTML =
@@ -1259,9 +1423,14 @@ function openForm(evObj, defaultDate) {
 }
 
 function closeForm() {
-  document.getElementById('form-panel').classList.add('closed');
+  const overlay = document.getElementById('form-overlay');
+  overlay.classList.add('closed');
   editingId = null;
   routeData = null;
+}
+
+function onOverlayClick(e) {
+  if (e.target === document.getElementById('form-overlay')) closeForm();
 }
 
 function refreshTripSelect() {
@@ -1306,6 +1475,113 @@ function updateAddrLink(which) {
   } else {
     lnk.href = '#'; lnk.classList.add('dim');
   }
+}
+
+// ── AUTOCOMPLETE SETUP ─────────────────────────────────────────────────────────
+let acInitialised = false;
+function setupAddressAutocomplete() {
+  if (acInitialised) return;
+  acInitialised = true;
+
+  initAutocomplete('f-departure', (name) => {
+    updateAddrLink('departure');
+    markRouteStale();
+  });
+  initAutocomplete('f-arrival', (name) => {
+    updateAddrLink('arrival');
+    markRouteStale();
+  });
+  initAutocomplete('f-sleep-addr', (name) => {
+    updateSleepLink();
+  });
+}
+
+// ── AUTOCOMPLETE ───────────────────────────────────────────────────────────────
+const acTimers = {};
+
+function initAutocomplete(inputId, onSelect) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+
+  input.addEventListener('input', () => {
+    clearTimeout(acTimers[inputId]);
+    acDropdownClose(inputId);
+    const q = input.value.trim();
+    if (q.length < 3) return;
+    acTimers[inputId] = setTimeout(() => acFetch(inputId, q, onSelect), 350);
+  });
+
+  input.addEventListener('keydown', e => {
+    const dd = document.getElementById('ac-' + inputId);
+    if (!dd) return;
+    const items = dd.querySelectorAll('.ac-item');
+    let active = dd.querySelector('.ac-item.active');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = active ? active.nextElementSibling : items[0];
+      if (next) { active?.classList.remove('active'); next.classList.add('active'); next.scrollIntoView({ block: 'nearest' }); }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prev = active?.previousElementSibling;
+      if (prev) { active.classList.remove('active'); prev.classList.add('active'); prev.scrollIntoView({ block: 'nearest' }); }
+    } else if (e.key === 'Enter') {
+      if (active) { e.preventDefault(); active.click(); }
+    } else if (e.key === 'Escape') {
+      acDropdownClose(inputId);
+    }
+  });
+
+  // Close on outside click
+  document.addEventListener('click', e => {
+    if (!input.contains(e.target) && !document.getElementById('ac-' + inputId)?.contains(e.target))
+      acDropdownClose(inputId);
+  });
+}
+
+async function acFetch(inputId, q, onSelect) {
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6&addressdetails=1`,
+      { headers: { 'Accept-Language': 'en' } }
+    );
+    if (!r.ok) return;
+    const results = await r.json();
+    acDropdownShow(inputId, results, onSelect);
+  } catch (_) {}
+}
+
+function acDropdownShow(inputId, results, onSelect) {
+  acDropdownClose(inputId);
+  if (!results.length) return;
+  const input = document.getElementById(inputId);
+  const wrap  = input.closest('.addr-wrap');
+  const ul = document.createElement('ul');
+  ul.className = 'ac-dropdown'; ul.id = 'ac-' + inputId;
+  // Prevent the dropdown from stealing focus from the input
+  ul.addEventListener('mousedown', e => e.preventDefault());
+  results.forEach(res => {
+    const parts = res.display_name.split(',').map(s => s.trim());
+    // Use first 2 meaningful parts as the fill value (e.g. "Eiffel Tower, Paris")
+    const fillValue = parts.slice(0, 2).join(', ');
+    const shortName = parts[0];
+    const detail    = parts.slice(1).join(', ');
+    const li = document.createElement('li');
+    li.className = 'ac-item';
+    li.title = res.display_name; // full text tooltip
+    li.innerHTML = `<span class="ac-item-name">${esc(shortName)}</span><span class="ac-item-detail">${esc(detail)}</span>`;
+    li.addEventListener('click', () => {
+      input.value = fillValue;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      acDropdownClose(inputId);
+      onSelect(fillValue, res);
+    });
+    ul.appendChild(li);
+  });
+  wrap.appendChild(ul);
+}
+
+function acDropdownClose(inputId) {
+  document.getElementById('ac-' + inputId)?.remove();
 }
 
 async function geocode(address) {
@@ -1385,6 +1661,131 @@ function fmtDrivingDur(s) {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+// ── EVENT LINKING ──────────────────────────────────────────────────────────────
+function linkedPrev(evId) {
+  return events.find(e => e.linkedNextId === evId) || null;
+}
+
+function clearLinksTo(evId) {
+  events.forEach(e => { if (e.linkedNextId === evId) e.linkedNextId = null; });
+}
+
+async function refreshEventRoute(ev) {
+  if (!ev.departure || !ev.arrival) return;
+  try {
+    const [dep, arr] = await Promise.all([geocode(ev.departure), geocode(ev.arrival)]);
+    if (!dep || !arr) return;
+    const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${dep.lon},${dep.lat};${arr.lon},${arr.lat}?overview=false`);
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.routes?.length) return;
+    const { distance: distM, duration: durS } = data.routes[0];
+    ev.distanceM = distM; ev.drivingSeconds = durS;
+    ev.timeOnRoadH = calcTimeOnRoad(distM / 1609.34);
+  } catch(_) {}
+}
+
+async function handleDrivingLinks(savedEv) {
+  if (savedEv.category !== 'driving' || !savedEv.tripId) return;
+
+  if (savedEv.linkedNextId) {
+    // Already linked — propagate arrival change to linked event
+    const next = events.find(e => e.id === savedEv.linkedNextId);
+    if (next) {
+      next.departure = savedEv.arrival || '';
+      updateAddrLinkOnEvent(next);
+      if (next.departure && next.arrival) await refreshEventRoute(next);
+      save(); render();
+    }
+    return;
+  }
+
+  // Try to auto-link to the chronologically next driving event in the same trip
+  if (!savedEv.arrival) return;
+  const next = events
+    .filter(e => e.tripId === savedEv.tripId && e.category === 'driving'
+              && e.id !== savedEv.id && e.start > savedEv.start)
+    .sort((a, b) => a.start - b.start)[0];
+  if (!next) return;
+
+  // Only auto-link if the next event has no departure yet, or is already linked from us
+  const prevOfNext = linkedPrev(next.id);
+  if (next.departure && prevOfNext?.id !== savedEv.id) return;
+
+  savedEv.linkedNextId = next.id;
+  next.departure = savedEv.arrival;
+  if (next.departure && next.arrival) await refreshEventRoute(next);
+  save(); render();
+}
+
+function disconnectLink(evId) {
+  const ev = events.find(e => e.id === evId);
+  if (!ev) return;
+  if (ev.linkedNextId) {
+    ev.linkedNextId = null;
+  } else {
+    const src = linkedPrev(evId);
+    if (src) src.linkedNextId = null;
+  }
+  // Update form badges if still open
+  if (editingId === evId || (editingId && events.find(e => e.id === editingId && e.linkedNextId === evId))) {
+    updateLinkStatusBadges(editingId);
+  }
+  save(); render();
+}
+
+async function reconnectLink(evId) {
+  const ev = events.find(e => e.id === evId);
+  if (!ev || ev.category !== 'driving' || !ev.tripId) return;
+  // Find the next driving event in the same trip not already linked to something else
+  const next = events
+    .filter(e => e.tripId === ev.tripId && e.category === 'driving'
+              && e.id !== ev.id && e.start > ev.start
+              && !linkedPrev(e.id))
+    .sort((a, b) => a.start - b.start)[0];
+  if (!next) { alert('No unlinked driving event found after this one in the same trip.'); return; }
+  ev.linkedNextId = next.id;
+  if (ev.arrival) {
+    next.departure = ev.arrival;
+    if (next.arrival) await refreshEventRoute(next);
+  }
+  if (editingId === evId) updateLinkStatusBadges(evId);
+  save(); render();
+}
+
+function updateAddrLinkOnEvent(ev) {
+  // No-op — route data is on the event object itself; nothing to update in DOM for background updates
+}
+
+function updateLinkStatusBadges(evId) {
+  const row    = document.getElementById('link-status-row');
+  const srcBdg = document.getElementById('link-src-badge');
+  const dstBdg = document.getElementById('link-dst-badge');
+  if (!row || !srcBdg || !dstBdg) return;
+
+  const ev  = events.find(e => e.id === evId);
+  const src = linkedPrev(evId);
+  const dst = ev?.linkedNextId ? events.find(e => e.id === ev.linkedNextId) : null;
+
+  // Check if there's a linkable next event (for reconnect button)
+  const canReconnect = !dst && ev?.category === 'driving' && ev?.tripId &&
+    events.some(e => e.tripId === ev.tripId && e.category === 'driving'
+                  && e.id !== evId && e.start > ev.start && !linkedPrev(e.id));
+
+  srcBdg.style.display = (dst || canReconnect) ? 'flex' : 'none';
+  dstBdg.style.display = src ? 'flex' : 'none';
+  row.style.display    = (dst || src || canReconnect) ? '' : 'none';
+
+  if (dst) srcBdg.innerHTML =
+    `⛓ Linked to: <em style="font-style:normal">${esc(dst.title)}</em>
+     <button onclick="disconnectLink(${evId})">✕ Disconnect</button>`;
+  else if (canReconnect) srcBdg.innerHTML =
+    `<button onclick="reconnectLink(${evId})" style="background:#f0fdf4;border:1px solid #86efac;color:#166534">🔗 Connect to next driving event</button>`;
+  if (src) dstBdg.innerHTML =
+    `⛓ Departure fed by: <em style="font-style:normal">${esc(src.title)}</em>
+     <button onclick="disconnectLink(${evId})">✕ Disconnect</button>`;
+}
+
 function submitForm() {
   const title   = document.getElementById('f-title').value.trim();
   const cat     = document.getElementById('f-cat').value;
@@ -1415,17 +1816,23 @@ function submitForm() {
 
   const drivingFields = { departure, arrival, distanceM, drivingSeconds, timeOnRoadH, sleepingAddress };
 
+  let savedEv;
   if (editingId !== null) {
-    const ev = events.find(e => e.id === editingId);
-    if (ev) Object.assign(ev, { title, category: cat, tripId, start, end, description: desc, ...drivingFields });
+    savedEv = events.find(e => e.id === editingId);
+    // Preserve existing link if category stays driving, otherwise drop it
+    const keepLink = cat === 'driving' ? savedEv?.linkedNextId : null;
+    if (savedEv) Object.assign(savedEv, { title, category: cat, tripId, start, end, description: desc, ...drivingFields, linkedNextId: keepLink ?? null });
   } else {
-    events.push({ id: nextEvId++, title, category: cat, tripId, start, end, description: desc, ...drivingFields });
+    savedEv = { id: nextEvId++, title, category: cat, tripId, start, end, description: desc, ...drivingFields, linkedNextId: null };
+    events.push(savedEv);
   }
   closeForm(); render();
+  if (savedEv?.category === 'driving') handleDrivingLinks(savedEv);
 }
 
 function deleteEditingEvent() {
   if (editingId === null || !confirm('Delete this event?')) return;
+  clearLinksTo(editingId);
   events = events.filter(e => e.id !== editingId);
   closeForm(); render();
 }
@@ -1474,6 +1881,22 @@ function showPop(e, ev) {
       const dir = `https://www.google.com/maps/dir/${encodeURIComponent(ev.departure)}/${encodeURIComponent(ev.arrival)}`;
       html += `<div><a href="${dir}" target="_blank">↗ Open directions in Google Maps</a></div>`;
     }
+    // Link info
+    const lnkDst = ev.linkedNextId ? events.find(x => x.id === ev.linkedNextId) : null;
+    const lnkSrc = linkedPrev(ev.id);
+    const popBtnStyle = 'margin-left:6px;background:none;border:1px solid #94a3b8;border-radius:4px;padding:1px 6px;font-size:10px;cursor:pointer';
+    if (lnkDst) html += `<div style="margin-top:2px">⛓ → <em style="font-style:normal">${esc(lnkDst.title)}</em>
+      <button onclick="disconnectLink(${ev.id});closePop();renderSidebar()" style="${popBtnStyle}">✕ Disconnect</button></div>`;
+    if (lnkSrc) html += `<div style="margin-top:2px">⛓ ← <em style="font-style:normal">${esc(lnkSrc.title)}</em>
+      <button onclick="disconnectLink(${ev.id});closePop();renderSidebar()" style="${popBtnStyle}">✕ Disconnect</button></div>`;
+    // Reconnect option — show if no forward link but a linkable next event exists
+    if (!lnkDst && ev.tripId) {
+      const canRec = events.some(e => e.tripId === ev.tripId && e.category === 'driving'
+                                   && e.id !== ev.id && e.start > ev.start && !linkedPrev(e.id));
+      if (canRec) html += `<div style="margin-top:4px">
+        <button onclick="reconnectLink(${ev.id}).then(()=>{closePop();renderSidebar()})"
+          style="background:#f0fdf4;border:1px solid #86efac;color:#166534;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">🔗 Connect to next driving event</button></div>`;
+    }
     drivingEl.innerHTML  = html;
     drivingEl.style.display = 'flex';
   } else {
@@ -1500,6 +1923,7 @@ function editFromPop() {
 
 function deleteFromPop() {
   if (!confirm('Delete this event?')) return;
+  clearLinksTo(popEvId);
   events = events.filter(e => e.id !== popEvId);
   closePop(); render();
 }
