@@ -422,6 +422,40 @@ body {
 .tviz-no-events { color: #94a3b8; font-size: 13px; font-style: italic; padding: 20px 0; text-align: center; }
 .tviz-loc-link { color: #0f172a; font-weight: 600; text-decoration: none; }
 .tviz-loc-link:hover { text-decoration: underline; color: #2563eb; }
+.tviz-print-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: 7px;
+  background: #f1f5f9; border: 1px solid #e2e8f0; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: #475569;
+  transition: all .15s;
+}
+.tviz-print-btn:hover { background: #e2e8f0; color: #0f172a; }
+@media print {
+  body > *:not(#trip-viz-overlay) { display: none !important; }
+  #trip-viz-overlay {
+    display: block !important; position: static !important;
+    background: none !important; backdrop-filter: none !important;
+    padding: 0 !important;
+  }
+  #trip-viz-modal {
+    width: 100% !important; max-height: none !important;
+    box-shadow: none !important; border-radius: 0 !important;
+    overflow: visible !important;
+  }
+  .tviz-header { padding: 12px 0 10px !important; }
+  .tviz-body {
+    overflow: visible !important; padding: 0 !important;
+  }
+  .tviz-day {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin-top: 18px;
+  }
+  .tviz-ev { break-inside: avoid; page-break-inside: avoid; }
+  .tviz-close, .tviz-print-btn { display: none !important; }
+  .tviz-map-btn { margin: 12px 0 0 !important; }
+  a { color: #0f172a !important; }
+}
 
 .unassigned-row {
   display: flex; align-items: center; gap: 7px;
@@ -839,6 +873,15 @@ body {
     <div class="tviz-header">
       <div class="tviz-color-bar" id="tviz-color-bar"></div>
       <div class="tviz-title" id="tviz-title"></div>
+      <button class="tviz-print-btn" onclick="printTripViz()" title="Print / Save as PDF">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="3" y="1" width="10" height="7" rx="1" stroke="currentColor" stroke-width="1.4"/>
+          <rect x="3" y="10" width="10" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M3 8h10v4H3z" fill="currentColor" fill-opacity=".12"/>
+          <circle cx="12" cy="10.5" r="1" fill="currentColor"/>
+        </svg>
+        Print
+      </button>
       <button class="tviz-close" onclick="closeTripViz()">✕</button>
     </div>
     <div class="tviz-stats" id="tviz-stats"></div>
@@ -1411,6 +1454,9 @@ function openTripViz(tripId) {
 function closeTripViz(e) {
   if (e && e.target !== document.getElementById('trip-viz-overlay')) return;
   document.getElementById('trip-viz-overlay').classList.remove('open');
+}
+function printTripViz() {
+  window.print();
 }
 
 function exportTrip(tripId) {
