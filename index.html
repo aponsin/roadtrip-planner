@@ -91,6 +91,77 @@ body {
   transition: background .15s;
 }
 .btn-new-event:hover { background: #fbbf24; }
+
+/* ── GITHUB SYNC ──────────────────────────────────────────────────────── */
+.btn-gh-sync {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 11px;
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.2);
+  color: #fff; border-radius: 7px; cursor: pointer;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+  transition: background .15s; flex-shrink: 0;
+}
+.btn-gh-sync:hover { background: rgba(255,255,255,.2); }
+#gh-modal {
+  display: none; position: fixed; inset: 0; z-index: 9000;
+  background: rgba(15,23,42,.55); backdrop-filter: blur(3px);
+  align-items: center; justify-content: center;
+}
+#gh-modal.open { display: flex; }
+#gh-modal-box {
+  background: #fff; border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.22);
+  width: min(440px, 94vw);
+  padding: 24px; display: flex; flex-direction: column; gap: 16px;
+}
+.gh-modal-hdr {
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid #e2e8f0; padding-bottom: 14px;
+}
+.gh-modal-title { font-size: 16px; font-weight: 700; color: #0f172a; flex: 1; }
+.gh-modal-close {
+  width: 28px; height: 28px; border-radius: 6px;
+  background: none; border: none; cursor: pointer;
+  font-size: 16px; color: #94a3b8; display: flex; align-items: center; justify-content: center;
+}
+.gh-modal-close:hover { background: #f1f5f9; color: #0f172a; }
+.gh-field { display: flex; flex-direction: column; gap: 5px; }
+.gh-field label { font-size: 12px; font-weight: 600; color: #475569; }
+.gh-field input {
+  padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 7px;
+  font-size: 13px; color: #0f172a; font-family: inherit; background: #fff;
+}
+.gh-field input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px #bfdbfe; }
+.gh-actions { display: flex; gap: 10px; }
+.gh-btn {
+  flex: 1; padding: 9px 12px; border-radius: 8px;
+  border: 1.5px solid #e2e8f0; cursor: pointer;
+  font-size: 13px; font-weight: 600; font-family: inherit;
+  transition: all .15s;
+}
+.gh-btn.save { background: #0f172a; color: #fff; border-color: #0f172a; }
+.gh-btn.save:hover { background: #1e293b; }
+.gh-btn.load { background: #fff; color: #0f172a; }
+.gh-btn.load:hover { background: #f1f5f9; }
+.gh-log {
+  max-height: 160px; overflow-y: auto;
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 7px;
+  padding: 8px 10px; font-size: 12px; font-family: ui-monospace, monospace;
+  line-height: 1.6; display: none;
+}
+.gh-log:not(:empty) { display: block; }
+.gh-log-ok    { color: #16a34a; }
+.gh-log-warn  { color: #d97706; }
+.gh-log-error { color: #dc2626; }
+.gh-log-info  { color: #64748b; }
+.gh-hint {
+  font-size: 11px; color: #94a3b8; line-height: 1.6; margin: 0;
+}
+.gh-hint a { color: #3b82f6; }
+.gh-hint code {
+  background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-size: 11px;
+}
 /* ── DAY CONTEXT MENU ───────────────────── */
 #day-ctx-menu {
   background: #fff;
@@ -708,8 +779,47 @@ body {
   </div>
   <input type="date" id="date-pick" class="hdr-date-pick" title="Jump to date" onchange="goToDate(this.value)">
   <div class="hdr-spacer"></div>
+  <button class="btn-gh-sync" onclick="openGHModal()" title="Sync trips with GitHub">
+    <svg width="14" height="12" viewBox="0 0 14 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M11.5 4.5C11.5 2.567 9.933 1 8 1C6.42 1 5.083 2.03 4.65 3.45C3.17 3.7 2 4.97 2 6.5C2 8.157 3.343 9.5 5 9.5H11C12.105 9.5 13 8.605 13 7.5C13 6.5 12.28 5.67 11.33 5.52C11.44 5.19 11.5 4.85 11.5 4.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+      <path d="M7 9.5V12M7 12L5.5 10.5M7 12L8.5 10.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    Sync
+  </button>
   <button class="btn-new-event" onclick="openForm()">＋ New Event</button>
 </header>
+
+<!-- GitHub Sync Modal -->
+<div id="gh-modal" onclick="if(event.target===this)closeGHModal()">
+  <div id="gh-modal-box">
+    <div class="gh-modal-hdr">
+      <svg width="20" height="16" viewBox="0 0 14 12" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:#3b82f6">
+        <path d="M11.5 4.5C11.5 2.567 9.933 1 8 1C6.42 1 5.083 2.03 4.65 3.45C3.17 3.7 2 4.97 2 6.5C2 8.157 3.343 9.5 5 9.5H11C12.105 9.5 13 8.605 13 7.5C13 6.5 12.28 5.67 11.33 5.52C11.44 5.19 11.5 4.85 11.5 4.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+        <path d="M7 7V11M7 7L5.5 8.5M7 7L8.5 8.5" stroke="#16a34a" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M7 5V1M7 5L5.5 3.5M7 5L8.5 3.5" stroke="#e11d48" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="gh-modal-title">GitHub Sync</span>
+      <button class="gh-modal-close" onclick="closeGHModal()">✕</button>
+    </div>
+    <div class="gh-field">
+      <label for="gh-token">GitHub Personal Access Token</label>
+      <input type="password" id="gh-token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="gh-field">
+      <label for="gh-repo">Repository (owner/repo)</label>
+      <input type="text" id="gh-repo" placeholder="aponsin/roadtrip-planner" spellcheck="false">
+    </div>
+    <p class="gh-hint">
+      Trip data is stored as CSV files in a <code>/data/</code> folder in your repo. Your token is saved only in this browser's localStorage — never sent anywhere except GitHub.<br>
+      <a href="https://github.com/settings/tokens/new?scopes=repo&description=Road+Trip+Planner" target="_blank">Create a token with <code>repo</code> scope →</a>
+    </p>
+    <div class="gh-actions">
+      <button class="gh-btn save" onclick="ghSave()">⬆ Save to GitHub</button>
+      <button class="gh-btn load" onclick="ghLoad()">⬇ Load from GitHub</button>
+    </div>
+    <div class="gh-log" id="gh-log"></div>
+  </div>
+</div>
 
 <!-- ── SHELL ──────────────────────────────────────────────── -->
 <div class="shell">
@@ -937,6 +1047,18 @@ let routeData    = null; // { distanceM, drivingSeconds } after a successful fet
 // ── BOOT ───────────────────────────────────────────────────────────────────────
 function init() {
   loadState();
+  // Accept ?token=ghp_... in the URL — saves it to localStorage then strips it
+  // from the address bar so it doesn't sit in browser history.
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = urlParams.get('token');
+  if (urlToken) {
+    const cfg = ghConfig();
+    cfg.token = urlToken;
+    ghSaveConfig(cfg);
+    urlParams.delete('token');
+    const newSearch = urlParams.toString();
+    history.replaceState({}, '', window.location.pathname + (newSearch ? '?' + newSearch : ''));
+  }
   if (!viewStart) viewStart = monday(new Date());
   buildTimeSelect();
   renderSidebar();
@@ -1468,6 +1590,233 @@ function closeTripViz(e) {
 }
 function printTripViz() {
   window.print();
+}
+
+// ── GITHUB SYNC ────────────────────────────────────────────────────────────────
+const GH_CONFIG_KEY = 'rtp4_gh';
+
+function ghConfig() {
+  try { return JSON.parse(localStorage.getItem(GH_CONFIG_KEY) || '{}'); } catch { return {}; }
+}
+function ghSaveConfig(cfg) { localStorage.setItem(GH_CONFIG_KEY, JSON.stringify(cfg)); }
+
+function ghTripFilename(trip) {
+  return (trip.name.replace(/[^\w\s\-]/g,'').trim().replace(/\s+/g,'_') || 'trip') + '.csv';
+}
+
+// Build CSV string for a trip (same format as exportTrip but returns string)
+function ghBuildCSV(tripId) {
+  const trip = trips.find(t => t.id === tripId);
+  if (!trip) return null;
+  const tripEvs = events.filter(e => e.tripId === tripId);
+  if (!tripEvs.length) return null;
+  const refMap = {};
+  tripEvs.forEach((ev, i) => refMap[ev.id] = i + 1);
+  const rows = tripEvs.map(ev => [
+    trip.name, trip.color,
+    ev.title, ev.category,
+    ev.start.toISOString(), ev.end.toISOString(),
+    ev.description || '',
+    ev.departure || '', ev.arrival || '',
+    ev.distanceM ?? '', ev.drivingSeconds ?? '', ev.timeOnRoadH ?? '',
+    ev.sleepingAddress || '',
+    refMap[ev.id],
+    ev.linkedNextId != null ? (refMap[ev.linkedNextId] ?? '') : '',
+  ].map(csvCell).join(','));
+  return [CSV_HEADERS.join(','), ...rows].join('\r\n');
+}
+
+// Encode string to base64 (UTF-8 safe)
+function ghEncode(str) {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(str)));
+}
+// Decode base64 to string (UTF-8 safe)
+function ghDecode(b64) {
+  return new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\n/g,'')), c => c.charCodeAt(0)));
+}
+
+async function ghApi(method, path, body, token, owner, repo) {
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+  const opts = {
+    method,
+    headers: {
+      'Authorization': `token ${token}`,
+      'Accept': 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json',
+    },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const resp = await fetch(url, opts);
+  if (resp.status === 404) return null;
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.message || `GitHub API error ${resp.status}`);
+  return data;
+}
+
+function openGHModal() {
+  const cfg = ghConfig();
+  document.getElementById('gh-token').value = cfg.token || '';
+  document.getElementById('gh-repo').value  = cfg.repo  || 'aponsin/roadtrip-planner';
+  document.getElementById('gh-log').innerHTML = '';
+  document.getElementById('gh-modal').classList.add('open');
+}
+function closeGHModal() {
+  document.getElementById('gh-modal').classList.remove('open');
+}
+
+function ghLog(msg, type = 'info') {
+  const log = document.getElementById('gh-log');
+  const div = document.createElement('div');
+  div.className = 'gh-log-' + type;
+  div.textContent = msg;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function ghSave() {
+  const token   = document.getElementById('gh-token').value.trim();
+  const repoStr = document.getElementById('gh-repo').value.trim();
+  if (!token)               { ghLog('⚠ Please enter a GitHub token.', 'warn'); return; }
+  if (!repoStr.includes('/')) { ghLog('⚠ Repo must be "owner/repo".', 'warn'); return; }
+  const [owner, repo] = repoStr.split('/');
+  ghSaveConfig({ token, repo: repoStr });
+
+  const tripsToSave = trips.filter(t => events.some(e => e.tripId === t.id));
+  if (!tripsToSave.length) { ghLog('⚠ No trips with events to save.', 'warn'); return; }
+
+  ghLog(`Saving ${tripsToSave.length} trip(s) to ${repoStr}/data/ …`);
+  let saved = 0, failed = 0;
+
+  for (const trip of tripsToSave) {
+    const filename = ghTripFilename(trip);
+    const csv = ghBuildCSV(trip.id);
+    if (!csv) continue;
+    try {
+      const existing = await ghApi('GET', `data/${filename}`, null, token, owner, repo);
+      await ghApi('PUT', `data/${filename}`, {
+        message: `Update trip: ${trip.name}`,
+        content: ghEncode(csv),
+        ...(existing?.sha ? { sha: existing.sha } : {}),
+      }, token, owner, repo);
+      ghLog(`✓ Saved "${trip.name}"`, 'ok');
+      saved++;
+    } catch(err) {
+      ghLog(`✗ "${trip.name}": ${err.message}`, 'error');
+      failed++;
+    }
+  }
+  ghLog(`Done — ${saved} saved${failed ? `, ${failed} failed` : ''}.`, saved > 0 ? 'ok' : 'warn');
+}
+
+async function ghLoad() {
+  const token   = document.getElementById('gh-token').value.trim();
+  const repoStr = document.getElementById('gh-repo').value.trim();
+  if (!token)               { ghLog('⚠ Please enter a GitHub token.', 'warn'); return; }
+  if (!repoStr.includes('/')) { ghLog('⚠ Repo must be "owner/repo".', 'warn'); return; }
+  const [owner, repo] = repoStr.split('/');
+  ghSaveConfig({ token, repo: repoStr });
+
+  ghLog(`Looking for CSV files in ${repoStr}/data/ …`);
+  let listing;
+  try {
+    listing = await ghApi('GET', 'data', null, token, owner, repo);
+  } catch(err) {
+    ghLog(`✗ Error listing /data/: ${err.message}`, 'error'); return;
+  }
+  if (!listing || !Array.isArray(listing)) {
+    ghLog('No /data/ folder found. Save to GitHub first to create it.', 'warn'); return;
+  }
+  const files = listing.filter(f => f.name.endsWith('.csv'));
+  if (!files.length) { ghLog('No .csv files found in /data/.', 'warn'); return; }
+
+  ghLog(`Found ${files.length} trip file(s). Loading…`);
+  let loaded = 0, replaced = 0, failed = 0;
+
+  for (const file of files) {
+    try {
+      const fileData = await ghApi('GET', `data/${file.name}`, null, token, owner, repo);
+      if (!fileData?.content) { ghLog(`⚠ Empty: ${file.name}`, 'warn'); continue; }
+
+      const csvText = ghDecode(fileData.content);
+      const lines = csvText.replace(/\r\n/g,'\n').replace(/\r/g,'\n').trim().split('\n');
+      if (lines.length < 2) continue;
+
+      const headers = parseCSVRow(lines[0]).map(h => h.trim());
+      const idx = {};
+      headers.forEach((h, i) => idx[h] = i);
+      const dataRows = lines.slice(1).filter(l => l.trim()).map(parseCSVRow);
+      if (!dataRows.length) continue;
+
+      const get = (row, key) => (idx[key] !== undefined ? (row[idx[key]] || '') : '');
+      const tripName  = get(dataRows[0], 'trip_name')  || file.name.replace('.csv','').replace(/_/g,' ');
+      const tripColor = get(dataRows[0], 'trip_color') || TRIP_COLORS[trips.length % TRIP_COLORS.length];
+
+      // Find existing trip by name → replace its events; otherwise create new
+      let existingTrip = trips.find(t => t.name === tripName);
+      let tripId;
+      if (existingTrip) {
+        events = events.filter(e => e.tripId !== existingTrip.id);
+        existingTrip.color = tripColor;
+        tripId = existingTrip.id;
+        ghLog(`↻ Replacing "${tripName}"`, 'info');
+        replaced++;
+      } else {
+        tripId = nextTripId++;
+        trips.push({ id: tripId, name: tripName, color: tripColor, visible: true });
+        ghLog(`＋ Adding "${tripName}"`, 'info');
+        loaded++;
+      }
+
+      const refToId = {};
+      const linkQueue = [];
+      const hasLinkCol = idx['linked_next_ref'] !== undefined;
+
+      for (const row of dataRows) {
+        const startStr = get(row,'start'), endStr = get(row,'end');
+        const parseDate = s => new Date(s.trim().replace(' ','T'));
+        const start = parseDate(startStr), end = parseDate(endStr);
+        if (!startStr || !endStr || isNaN(start) || isNaN(end)) continue;
+        const num = key => { const v = get(row,key); return v !== '' ? parseFloat(v) : null; };
+        const newId = nextEvId++;
+        const ref = get(row,'event_ref');
+        if (ref) refToId[ref] = newId;
+        const lnkRef = get(row,'linked_next_ref');
+        if (lnkRef) linkQueue.push({ evId: newId, linkedRef: lnkRef });
+        events.push({
+          id: newId, tripId,
+          title: get(row,'title') || 'Untitled',
+          category: get(row,'category') || 'misc',
+          start, end,
+          description:    get(row,'description'),
+          departure:      get(row,'departure'),
+          arrival:        get(row,'arrival'),
+          distanceM:      num('distance_m'),
+          drivingSeconds: num('driving_seconds'),
+          timeOnRoadH:    num('time_on_road_h'),
+          sleepingAddress: get(row,'sleeping_address'),
+          linkedNextId:   null,
+        });
+      }
+      if (hasLinkCol) {
+        for (const { evId, linkedRef } of linkQueue) {
+          const targetId = refToId[linkedRef];
+          if (targetId) { const ev = events.find(e => e.id === evId); if (ev) ev.linkedNextId = targetId; }
+        }
+      }
+      ghLog(`✓ "${tripName}" loaded`, 'ok');
+    } catch(err) {
+      ghLog(`✗ "${file.name}": ${err.message}`, 'error');
+      failed++;
+    }
+  }
+
+  save(); renderSidebar(); render();
+  const summary = [
+    loaded   ? `${loaded} new`     : '',
+    replaced ? `${replaced} updated` : '',
+    failed   ? `${failed} failed`  : '',
+  ].filter(Boolean).join(', ');
+  ghLog(`Done — ${summary || 'nothing changed'}.`, (loaded + replaced) > 0 ? 'ok' : 'warn');
 }
 
 function exportTrip(tripId) {
@@ -2609,7 +2958,7 @@ function onDocClick(e) {
 }
 
 function onKeyDown(e) {
-  if (e.key === 'Escape') { closePop(); closeForm(); closeCtxMenu(); document.getElementById('trip-viz-overlay').classList.remove('open'); }
+  if (e.key === 'Escape') { closePop(); closeForm(); closeCtxMenu(); document.getElementById('trip-viz-overlay').classList.remove('open'); closeGHModal(); }
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key.toLowerCase() === 'z') {
     e.preventDefault();
