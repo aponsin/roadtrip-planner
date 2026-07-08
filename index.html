@@ -1009,7 +1009,12 @@ function loadState() {
     unassVis   = d.unassVis  !== false;
     nextTripId = d.nextTripId || 1;
     nextEvId   = d.nextEvId   || 1;
-    viewStart  = d.viewStart  ? new Date(d.viewStart) : null;
+    // Load viewStart and re-anchor to Monday midnight.
+    // Adding 12 h before calling monday() corrects any DST drift (±1 h per crossing)
+    // that may have accumulated from raw-millisecond week arithmetic.
+    viewStart  = d.viewStart
+      ? monday(new Date(d.viewStart + 12 * 3600000))
+      : null;
     events     = (d.events || []).map(e => ({ ...e, start: new Date(e.start), end: new Date(e.end) }));
     migrateLinks();
   } catch (_) {}
@@ -1124,7 +1129,13 @@ function isToday(d) {
 }
 
 // ── NAVIGATION ─────────────────────────────────────────────────────────────────
-function navigate(weeks) { viewStart = addWeeks(viewStart, weeks); render(); }
+function navigate(weeks) {
+  // Anchor at noon before adding weeks so DST transitions can't drift viewStart
+  // off midnight, then re-snap to Monday midnight via monday().
+  const noon = new Date(viewStart.getFullYear(), viewStart.getMonth(), viewStart.getDate(), 12, 0, 0, 0);
+  viewStart = monday(new Date(noon.getTime() + weeks * WK));
+  render();
+}
 function goToDate(s) { if (s) { viewStart = monday(new Date(s + 'T00:00:00')); render(); } }
 
 // ── SIDEBAR ─────────────────────────────────────────────────────────────────────
@@ -1630,7 +1641,8 @@ function evVisible(ev) {
 function segments(ev) {
   const segs = [];
   for (let w = 0; w < 10; w++) {
-    const ws = new Date(viewStart.getTime() + w * WK);
+    const wsRaw = new Date(viewStart.getTime() + w * WK);
+    const ws = new Date(wsRaw.getFullYear(), wsRaw.getMonth(), wsRaw.getDate());
     const we = new Date(ws.getTime() + WK);
     if (ev.start >= we || ev.end <= ws) continue;
     const ss = Math.max(ev.start.getTime(), ws.getTime());
@@ -1749,7 +1761,9 @@ function renderCal() {
   let html   = '';
 
   for (let w = 0; w < 10; w++) {
-    const ws = new Date(viewStart.getTime() + w * WK);
+    // Snap ws to local midnight to prevent DST drift from shifting date numbers
+    const wsRaw = new Date(viewStart.getTime() + w * WK);
+    const ws = new Date(wsRaw.getFullYear(), wsRaw.getMonth(), wsRaw.getDate());
     const we = new Date(ws.getTime() + WK);
     const { segs, laneCount, tripBands } = weekLanes(w);
     const rowH = DATE_ROW + LANE_TOP + laneCount * (LANE_H + LANE_GAP) + ROW_PAD;
