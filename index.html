@@ -3109,6 +3109,9 @@ function onKeyDown(e) {
   if (e.key === 'Escape') { closePop(); closeForm(); closeCtxMenu(); document.getElementById('trip-viz-overlay').classList.remove('open'); closeGHModal(); }
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key.toLowerCase() === 'z') {
+    // Don't intercept undo while the event form is open — let text inputs handle it natively
+    const formOpen = !document.getElementById('form-overlay')?.classList.contains('closed');
+    if (formOpen) return;
     e.preventDefault();
     if (e.shiftKey) { redoLastAction(); }
     else if (lastUndoable) { undoLastAction(); }
