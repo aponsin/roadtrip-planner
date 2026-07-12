@@ -2571,13 +2571,48 @@ function acDropdownClose(inputId) {
 }
 
 async function geocode(address) {
-  const r = await fetch(
-    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`,
-    { headers: { 'Accept-Language': 'en' } }
-  );
-  if (!r.ok) return null;
-  const d = await r.json();
-  return d.length ? { lat: d[0].lat, lon: d[0].lon } : null;
+  // 1. Try Nominatim with full address
+  const r1 = await geocodeNominatim(address);
+  if (r1) return r1;
+
+  // 2. Try Photon (different OSM index, better at small US towns & POIs)
+  const r2 = await geocodePhoton(address);
+  if (r2) return r2;
+
+  // 3. Strip leading POI/street name and retry with just city/state/country
+  const parts = address.split(',').map(s => s.trim()).filter(Boolean);
+  if (parts.length > 2) {
+    const simplified = parts.slice(-(Math.min(parts.length - 1, 3))).join(', ');
+    const r3 = await geocodeNominatim(simplified) || await geocodePhoton(simplified);
+    if (r3) return r3;
+  }
+
+  return null;
+}
+
+async function geocodeNominatim(q) {
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`,
+      { headers: { 'Accept-Language': 'en' } }
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.length ? { lat: parseFloat(d[0].lat), lon: parseFloat(d[0].lon) } : null;
+  } catch (_) { return null; }
+}
+
+async function geocodePhoton(q) {
+  try {
+    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (d.features?.length) {
+      const [lon, lat] = d.features[0].geometry.coordinates;
+      return { lat, lon };
+    }
+    return null;
+  } catch (_) { return null; }
 }
 
 async function fetchRoute() {
@@ -2590,8 +2625,8 @@ async function fetchRoute() {
 
   try {
     const [dep, arr] = await Promise.all([geocode(depVal), geocode(arrVal)]);
-    if (!dep) throw new Error(`Could not geocode: "${depVal}"`);
-    if (!arr) throw new Error(`Could not geocode: "${arrVal}"`);
+    if (!dep) throw new Error(`Could not locate "${depVal}" — try a simpler address like "City, State"`);
+    if (!arr) throw new Error(`Could not locate "${arrVal}" — try a simpler address like "City, State"`);
 
     const r = await fetch(
       `https://router.project-osrm.org/route/v1/driving/${dep.lon},${dep.lat};${arr.lon},${arr.lat}?overview=false`
