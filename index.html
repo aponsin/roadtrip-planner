@@ -2603,6 +2603,9 @@ async function fetchRoute() {
     const { distance: distM, duration: durS } = data.routes[0];
     routeData = { distanceM: distM, drivingSeconds: durS, timeOnRoadH: calcTimeOnRoad(distM / 1609.34) };
     renderRouteChip(box, depVal, arrVal, distM, durS);
+    // Auto-fill event duration from time-on-road
+    document.getElementById('f-dur-h').value = routeData.timeOnRoadH;
+    document.getElementById('f-dur-m').value = 0;
   } catch (err) {
     routeData = null;
     box.innerHTML = `<span style="color:#dc2626;font-size:12px">⚠ ${esc(err.message)}</span>
