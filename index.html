@@ -896,6 +896,26 @@ body {
         </div>
       </div>
     </div>
+    <!-- Dining-only fields -->
+    <div id="dining-fields" class="form-row" style="display:none">
+      <div class="ff" style="flex:3;min-width:200px">
+        <label>Restaurant / location</label>
+        <div class="addr-wrap">
+          <input type="text" id="f-dining-addr" placeholder="Name or address…" oninput="updateDiningLink()">
+          <a id="lnk-dining" class="addr-link dim" href="#" target="_blank" title="Open in Google Maps">📍</a>
+        </div>
+      </div>
+    </div>
+    <!-- Sightseeing-only fields -->
+    <div id="sightseeing-fields" class="form-row" style="display:none">
+      <div class="ff" style="flex:3;min-width:200px">
+        <label>Place / address</label>
+        <div class="addr-wrap">
+          <input type="text" id="f-sightseeing-addr" placeholder="Name or address…" oninput="updateSightseeingLink()">
+          <a id="lnk-sightseeing" class="addr-link dim" href="#" target="_blank" title="Open in Google Maps">📍</a>
+        </div>
+      </div>
+    </div>
 
     <!-- Driving-only fields -->
     <div id="driving-fields" class="form-row" style="display:none">
@@ -917,11 +937,11 @@ body {
         <label>Distance &amp; drive time</label>
         <div id="route-result"><button class="btn btn-g" onclick="fetchRoute()" style="padding:5px 10px;font-size:12px">↗ Get route</button></div>
       </div>
-      <!-- Link status (full-width, shown when linked) -->
-      <div id="link-status-row" style="width:100%;display:none;padding-top:2px">
-        <div id="link-src-badge"  class="link-badge src" style="display:none"></div>
-        <div id="link-dst-badge"  class="link-badge dst" style="display:none"></div>
-      </div>
+    </div>
+    <!-- Link status (full-width, shown for any chainable event) -->
+    <div id="link-status-row" class="form-row" style="display:none;padding-top:2px">
+      <div id="link-src-badge"  class="link-badge src" style="display:none"></div>
+      <div id="link-dst-badge"  class="link-badge dst" style="display:none"></div>
     </div>
     <div class="form-actions">
       <button class="btn btn-p" onclick="submitForm()">Save Event</button>
@@ -1388,7 +1408,7 @@ const CSV_HEADERS = [
   'trip_name','trip_color',
   'title','category','start','end','description',
   'departure','arrival','distance_m','driving_seconds','time_on_road_h',
-  'sleeping_address','event_ref','linked_next_ref',
+  'sleeping_address','dining_address','sightseeing_address','event_ref','linked_next_ref',
 ];
 
 function csvCell(val) {
@@ -1556,8 +1576,26 @@ function openTripViz(tripId) {
         </div>`;
       }
 
-      // ── Sightseeing / transportation → search link from title ──
-      if ((ev.category === 'sightseeing' || ev.category === 'transportation' || ev.category === 'dining') && ev.title) {
+      // ── Dining ──
+      if (ev.category === 'dining' && ev.diningAddress) {
+        evExtra += `<div class="tviz-ev-drive">
+          <span class="tviz-chip" style="background:#fff7ed;color:#7c2d12;border-color:#f97316">📍 ${esc(ev.diningAddress)}</span>
+          <a href="${mapsSearch(ev.diningAddress)}" target="_blank">View on map</a>
+        </div>`;
+      }
+
+      // ── Sightseeing ──
+      if (ev.category === 'sightseeing' && ev.sightseeingAddress) {
+        evExtra += `<div class="tviz-ev-drive">
+          <span class="tviz-chip" style="background:#d1fae5;color:#064e3b;border-color:#10b981">📍 ${esc(ev.sightseeingAddress)}</span>
+          <a href="${mapsSearch(ev.sightseeingAddress)}" target="_blank">View on map</a>
+        </div>`;
+      }
+
+      // ── Sightseeing / transportation → search link from title (fallback when no address) ──
+      if ((ev.category === 'transportation' ||
+           (ev.category === 'sightseeing' && !ev.sightseeingAddress) ||
+           (ev.category === 'dining' && !ev.diningAddress)) && ev.title) {
         evExtra += `<div class="tviz-ev-drive"><a href="${mapsSearch(ev.title)}" target="_blank">📍 Find on map</a></div>`;
       }
 
@@ -1621,7 +1659,7 @@ function ghBuildCSV(tripId) {
     ev.description || '',
     ev.departure || '', ev.arrival || '',
     ev.distanceM ?? '', ev.drivingSeconds ?? '', ev.timeOnRoadH ?? '',
-    ev.sleepingAddress || '',
+    ev.sleepingAddress || '', ev.diningAddress || '', ev.sightseeingAddress || '',
     refMap[ev.id],
     ev.linkedNextId != null ? (refMap[ev.linkedNextId] ?? '') : '',
   ].map(csvCell).join(','));
@@ -1795,7 +1833,9 @@ async function ghLoad() {
           distanceM:      num('distance_m'),
           drivingSeconds: num('driving_seconds'),
           timeOnRoadH:    num('time_on_road_h'),
-          sleepingAddress: get(row,'sleeping_address'),
+          sleepingAddress:    get(row,'sleeping_address'),
+          diningAddress:      get(row,'dining_address'),
+          sightseeingAddress: get(row,'sightseeing_address'),
           linkedNextId:   null,
         });
       }
@@ -1838,7 +1878,7 @@ function exportTrip(tripId) {
     ev.description || '',
     ev.departure || '', ev.arrival || '',
     ev.distanceM ?? '', ev.drivingSeconds ?? '', ev.timeOnRoadH ?? '',
-    ev.sleepingAddress || '',
+    ev.sleepingAddress || '', ev.diningAddress || '', ev.sightseeingAddress || '',
     refMap[ev.id],                                           // event_ref (row index)
     ev.linkedNextId != null ? (refMap[ev.linkedNextId] ?? '') : '',  // linked_next_ref
   ].map(csvCell).join(','));
@@ -1938,7 +1978,9 @@ function parseImportCSV(text) {
       distanceM:      num('distance_m'),
       drivingSeconds: num('driving_seconds'),
       timeOnRoadH:    num('time_on_road_h'),
-      sleepingAddress: get(row, 'sleeping_address'),
+      sleepingAddress:    get(row, 'sleeping_address'),
+      diningAddress:      get(row, 'dining_address'),
+      sightseeingAddress: get(row, 'sightseeing_address'),
       linkedNextId:   null,
     });
     imported++;
@@ -2268,10 +2310,24 @@ function openForm(evObj, defaultDate, defaultTripId) {
       document.getElementById('f-sleep-addr').value = evObj.sleepingAddress || '';
       updateSleepLink();
     }
+    // Dining fields
+    const isDining = evObj.category === 'dining';
+    document.getElementById('dining-fields').style.display = isDining ? '' : 'none';
+    if (isDining) {
+      document.getElementById('f-dining-addr').value = evObj.diningAddress || '';
+      updateDiningLink();
+    }
+    // Sightseeing fields
+    const isSightseeing = evObj.category === 'sightseeing';
+    document.getElementById('sightseeing-fields').style.display = isSightseeing ? '' : 'none';
+    if (isSightseeing) {
+      document.getElementById('f-sightseeing-addr').value = evObj.sightseeingAddress || '';
+      updateSightseeingLink();
+    }
     // Driving fields
     const isDriving = evObj.category === 'driving';
     document.getElementById('driving-fields').style.display = isDriving ? '' : 'none';
-    if (isDriving) { updateLinkStatusBadges(evObj.id); } else { document.getElementById('link-status-row').style.display = 'none'; }
+    if (isChainableEv(evObj)) { updateLinkStatusBadges(evObj.id); } else { document.getElementById('link-status-row').style.display = 'none'; }
     if (isDriving) {
       document.getElementById('f-departure').value = evObj.departure || '';
       document.getElementById('f-arrival').value   = evObj.arrival   || '';
@@ -2297,8 +2353,10 @@ function openForm(evObj, defaultDate, defaultTripId) {
     document.getElementById('f-dur-m').value = 0;
     document.getElementById('f-desc').value  = '';
     // New events default to driving — show driving fields, hide sleeping
-    document.getElementById('driving-fields').style.display  = '';
-    document.getElementById('sleeping-fields').style.display = 'none';
+    document.getElementById('driving-fields').style.display      = '';
+    document.getElementById('sleeping-fields').style.display     = 'none';
+    document.getElementById('dining-fields').style.display       = 'none';
+    document.getElementById('sightseeing-fields').style.display  = 'none';
     document.getElementById('link-status-row').style.display = 'none';
     document.getElementById('link-src-badge').style.display  = 'none';
     document.getElementById('link-dst-badge').style.display  = 'none';
@@ -2316,8 +2374,12 @@ function openForm(evObj, defaultDate, defaultTripId) {
     updateAddrLink('departure'); updateAddrLink('arrival');
     document.getElementById('route-result').innerHTML =
       '<button class="btn btn-g" onclick="fetchRoute()" style="padding:5px 10px;font-size:12px">↗ Get route</button>';
-    document.getElementById('f-sleep-addr').value = '';
+    document.getElementById('f-sleep-addr').value       = '';
+    document.getElementById('f-dining-addr').value      = '';
+    document.getElementById('f-sightseeing-addr').value = '';
     updateSleepLink();
+    updateDiningLink();
+    updateSightseeingLink();
   }
   setTimeout(() => document.getElementById('f-title').focus(), 60);
 }
@@ -2345,13 +2407,31 @@ function refreshTripSelect() {
 // ── DRIVING HELPERS ────────────────────────────────────────────────────────────
 function onCatChange() {
   const cat = document.getElementById('f-cat').value;
-  document.getElementById('driving-fields').style.display  = cat === 'driving'  ? '' : 'none';
-  document.getElementById('sleeping-fields').style.display = cat === 'sleeping' ? '' : 'none';
+  document.getElementById('driving-fields').style.display     = cat === 'driving'     ? '' : 'none';
+  document.getElementById('sleeping-fields').style.display    = cat === 'sleeping'    ? '' : 'none';
+  document.getElementById('dining-fields').style.display      = cat === 'dining'      ? '' : 'none';
+  document.getElementById('sightseeing-fields').style.display = cat === 'sightseeing' ? '' : 'none';
 }
 
 function updateSleepLink() {
   const q   = document.getElementById('f-sleep-addr')?.value.trim();
   const lnk = document.getElementById('lnk-sleep');
+  if (!lnk) return;
+  if (q) { lnk.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`; lnk.classList.remove('dim'); }
+  else   { lnk.href = '#'; lnk.classList.add('dim'); }
+}
+
+function updateDiningLink() {
+  const q   = document.getElementById('f-dining-addr')?.value.trim();
+  const lnk = document.getElementById('lnk-dining');
+  if (!lnk) return;
+  if (q) { lnk.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`; lnk.classList.remove('dim'); }
+  else   { lnk.href = '#'; lnk.classList.add('dim'); }
+}
+
+function updateSightseeingLink() {
+  const q   = document.getElementById('f-sightseeing-addr')?.value.trim();
+  const lnk = document.getElementById('lnk-sightseeing');
   if (!lnk) return;
   if (q) { lnk.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`; lnk.classList.remove('dim'); }
   else   { lnk.href = '#'; lnk.classList.add('dim'); }
@@ -2393,6 +2473,12 @@ function setupAddressAutocomplete() {
   });
   initAutocomplete('f-sleep-addr', (name) => {
     updateSleepLink();
+  });
+  initAutocomplete('f-dining-addr', (name) => {
+    updateDiningLink();
+  });
+  initAutocomplete('f-sightseeing-addr', (name) => {
+    updateSightseeingLink();
   });
 }
 
@@ -2570,6 +2656,23 @@ function clearLinksTo(evId) {
   events.forEach(e => { if (e.linkedNextId === evId) e.linkedNextId = null; });
 }
 
+// Returns true if an event can participate in the journey chain
+function isChainableEv(ev) {
+  if (!ev) return false;
+  if (ev.category === 'driving') return true;
+  if (ev.sleepingAddress || ev.diningAddress || ev.sightseeingAddress) return true;
+  // Also include if already chained (address may have been cleared after linking)
+  if (ev.linkedNextId || linkedPrev(ev.id)) return true;
+  return false;
+}
+
+// Returns the "output address" of an event — what gets propagated to the next driving event's departure
+function evChainAddr(ev) {
+  if (!ev) return '';
+  if (ev.category === 'driving') return ev.arrival || '';
+  return ev.sleepingAddress || ev.diningAddress || ev.sightseeingAddress || '';
+}
+
 async function refreshEventRoute(ev) {
   if (!ev.departure || !ev.arrival) return;
   try {
@@ -2585,37 +2688,63 @@ async function refreshEventRoute(ev) {
   } catch(_) {}
 }
 
-async function handleDrivingLinks(savedEv) {
-  if (savedEv.category !== 'driving' || !savedEv.tripId) return;
+async function handleChainLinks(savedEv) {
+  if (!savedEv.tripId || !isChainableEv(savedEv)) return;
 
   if (savedEv.linkedNextId) {
-    // Already linked — propagate arrival change to linked event
     const next = events.find(e => e.id === savedEv.linkedNextId);
-    if (next) {
-      next.departure = savedEv.arrival || '';
-      updateAddrLinkOnEvent(next);
-      if (next.departure && next.arrival) await refreshEventRoute(next);
-      save(); render();
-    }
+    if (next) await applyChainPropagation(savedEv, next);
+    save(); render();
     return;
   }
 
-  // Try to auto-link to the chronologically next driving event in the same trip
-  if (!savedEv.arrival) return;
+  // Auto-link to the chronologically next chainable event in the same trip
+  const addr = evChainAddr(savedEv);
+  if (!addr) return; // no address to propagate, skip auto-link
   const next = events
-    .filter(e => e.tripId === savedEv.tripId && e.category === 'driving'
+    .filter(e => e.tripId === savedEv.tripId && isChainableEv(e)
               && e.id !== savedEv.id && e.start > savedEv.start)
     .sort((a, b) => a.start - b.start)[0];
   if (!next) return;
 
-  // Only auto-link if the next event has no departure yet, or is already linked from us
+  // Only auto-link if the next event isn't already linked from something else
   const prevOfNext = linkedPrev(next.id);
-  if (next.departure && prevOfNext?.id !== savedEv.id) return;
+  if (prevOfNext && prevOfNext.id !== savedEv.id) return;
 
   savedEv.linkedNextId = next.id;
-  next.departure = savedEv.arrival;
-  if (next.departure && next.arrival) await refreshEventRoute(next);
+  await applyChainPropagation(savedEv, next);
   save(); render();
+}
+
+// Propagates addresses between two linked events:
+//   driving → address stop : fills driving.arrival from stop's address
+//   driving → driving      : fills next.departure from this.arrival
+//   address stop → driving : fills next.departure from stop's address
+async function applyChainPropagation(from, to) {
+  if (from.category === 'driving') {
+    const toAddr = evChainAddr(to);
+    if (to.category !== 'driving' && toAddr) {
+      // Driving to a named stop — back-fill the leg's arrival
+      if (!from.arrival) {
+        from.arrival = toAddr;
+        if (from.departure && from.arrival) await refreshEventRoute(from);
+      }
+    } else if (to.category === 'driving') {
+      // Driving leg to driving leg — seed next departure
+      const fromAddr = evChainAddr(from);
+      if (fromAddr && !to.departure) {
+        to.departure = fromAddr;
+        if (to.departure && to.arrival) await refreshEventRoute(to);
+      }
+    }
+  } else {
+    // Address stop → driving leg — seed next departure
+    const fromAddr = evChainAddr(from);
+    if (to.category === 'driving' && fromAddr && !to.departure) {
+      to.departure = fromAddr;
+      if (to.departure && to.arrival) await refreshEventRoute(to);
+    }
+  }
 }
 
 function disconnectLink(evId) {
@@ -2636,19 +2765,15 @@ function disconnectLink(evId) {
 
 async function reconnectLink(evId) {
   const ev = events.find(e => e.id === evId);
-  if (!ev || ev.category !== 'driving' || !ev.tripId) return;
-  // Find the next driving event in the same trip not already linked to something else
+  if (!ev || !ev.tripId || !isChainableEv(ev)) return;
   const next = events
-    .filter(e => e.tripId === ev.tripId && e.category === 'driving'
+    .filter(e => e.tripId === ev.tripId && isChainableEv(e)
               && e.id !== ev.id && e.start > ev.start
               && !linkedPrev(e.id))
     .sort((a, b) => a.start - b.start)[0];
-  if (!next) { alert('No unlinked driving event found after this one in the same trip.'); return; }
+  if (!next) { alert('No unlinked event found after this one in the same trip.'); return; }
   ev.linkedNextId = next.id;
-  if (ev.arrival) {
-    next.departure = ev.arrival;
-    if (next.arrival) await refreshEventRoute(next);
-  }
+  await applyChainPropagation(ev, next);
   if (editingId === evId) updateLinkStatusBadges(evId);
   save(); render();
 }
@@ -2668,8 +2793,8 @@ function updateLinkStatusBadges(evId) {
   const dst = ev?.linkedNextId ? events.find(e => e.id === ev.linkedNextId) : null;
 
   // Check if there's a linkable next event (for reconnect button)
-  const canReconnect = !dst && ev?.category === 'driving' && ev?.tripId &&
-    events.some(e => e.tripId === ev.tripId && e.category === 'driving'
+  const canReconnect = !dst && ev && isChainableEv(ev) && ev.tripId &&
+    events.some(e => e.tripId === ev.tripId && isChainableEv(e)
                   && e.id !== evId && e.start > ev.start && !linkedPrev(e.id));
 
   srcBdg.style.display = (dst || canReconnect) ? 'flex' : 'none';
@@ -2680,9 +2805,9 @@ function updateLinkStatusBadges(evId) {
     `⛓ Linked to: <em style="font-style:normal">${esc(dst.title)}</em>
      <button onclick="disconnectLink(${evId})">✕ Disconnect</button>`;
   else if (canReconnect) srcBdg.innerHTML =
-    `<button onclick="reconnectLink(${evId})" style="background:#f0fdf4;border:1px solid #86efac;color:#166534">🔗 Connect to next driving event</button>`;
+    `<button onclick="reconnectLink(${evId})" style="background:#f0fdf4;border:1px solid #86efac;color:#166534">🔗 Connect to next event</button>`;
   if (src) dstBdg.innerHTML =
-    `⛓ Departure fed by: <em style="font-style:normal">${esc(src.title)}</em>
+    `⛓ Linked from: <em style="font-style:normal">${esc(src.title)}</em>
      <button onclick="disconnectLink(${evId})">✕ Disconnect</button>`;
 }
 
@@ -2705,7 +2830,11 @@ function submitForm() {
   const end = new Date(start.getTime() + durMs);
 
   // Sleeping-specific fields
-  const sleepingAddress = cat === 'sleeping' ? (document.getElementById('f-sleep-addr')?.value.trim() || '') : '';
+  const sleepingAddress    = cat === 'sleeping'    ? (document.getElementById('f-sleep-addr')?.value.trim()       || '') : '';
+  // Dining-specific fields
+  const diningAddress      = cat === 'dining'      ? (document.getElementById('f-dining-addr')?.value.trim()      || '') : '';
+  // Sightseeing-specific fields
+  const sightseeingAddress = cat === 'sightseeing' ? (document.getElementById('f-sightseeing-addr')?.value.trim() || '') : '';
 
   // Driving-specific fields
   const departure       = cat === 'driving' ? (document.getElementById('f-departure')?.value.trim() || '') : '';
@@ -2714,24 +2843,25 @@ function submitForm() {
   const drivingSeconds  = cat === 'driving' && routeData ? routeData.drivingSeconds : null;
   const timeOnRoadH     = cat === 'driving' && routeData ? routeData.timeOnRoadH    : null;
 
-  const drivingFields = { departure, arrival, distanceM, drivingSeconds, timeOnRoadH, sleepingAddress };
+  const drivingFields = { departure, arrival, distanceM, drivingSeconds, timeOnRoadH, sleepingAddress, diningAddress, sightseeingAddress };
 
   let savedEv;
   if (editingId !== null) {
     savedEv = events.find(e => e.id === editingId);
-    // Preserve existing link if category stays driving, otherwise drop it
-    const keepLink = cat === 'driving' ? savedEv?.linkedNextId : null;
+    // Preserve existing link if new category is still chainable, otherwise drop it
+    const chainableCats = ['driving', 'sleeping', 'dining', 'sightseeing'];
+    const keepLink = chainableCats.includes(cat) ? savedEv?.linkedNextId : null;
     if (savedEv) Object.assign(savedEv, { title, category: cat, tripId, start, end, description: desc, ...drivingFields, linkedNextId: keepLink ?? null });
   } else {
     savedEv = { id: nextEvId++, title, category: cat, tripId, start, end, description: desc, ...drivingFields, linkedNextId: null };
     events.push(savedEv);
     closeForm(); render();
-    if (savedEv?.category === 'driving') handleDrivingLinks(savedEv);
+    handleChainLinks(savedEv);
     recordUndo('add', savedEv);
     return;
   }
   closeForm(); render();
-  if (savedEv?.category === 'driving') handleDrivingLinks(savedEv);
+  handleChainLinks(savedEv);
 }
 
 function deleteEditingEvent() {
@@ -2767,49 +2897,62 @@ function showPop(e, ev) {
 
   // Driving route info / Sleeping location
   const drivingEl = document.getElementById('pop-driving');
+  let popDrivingHtml = '';
+  let showDrivingEl = false;
+
   if (ev.category === 'sleeping' && ev.sleepingAddress) {
     const q = encodeURIComponent(ev.sleepingAddress);
-    drivingEl.innerHTML = `<div>📍 <a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank">${esc(ev.sleepingAddress)}</a></div>`;
-    drivingEl.style.display = 'flex';
+    popDrivingHtml += `<div>📍 <a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank">${esc(ev.sleepingAddress)}</a></div>`;
+    showDrivingEl = true;
+  } else if (ev.category === 'dining' && ev.diningAddress) {
+    const q = encodeURIComponent(ev.diningAddress);
+    popDrivingHtml += `<div>🍽️ <a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank">${esc(ev.diningAddress)}</a></div>`;
+    showDrivingEl = true;
+  } else if (ev.category === 'sightseeing' && ev.sightseeingAddress) {
+    const q = encodeURIComponent(ev.sightseeingAddress);
+    popDrivingHtml += `<div>📸 <a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank">${esc(ev.sightseeingAddress)}</a></div>`;
+    showDrivingEl = true;
   } else if (ev.category === 'driving' && (ev.departure || ev.arrival || ev.distanceM != null)) {
-    let html = '';
     if (ev.departure) {
       const q = encodeURIComponent(ev.departure);
-      html += `<div>🚩 <a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank">${esc(ev.departure)}</a></div>`;
+      popDrivingHtml += `<div>🚩 <a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank">${esc(ev.departure)}</a></div>`;
     }
     if (ev.arrival) {
       const q = encodeURIComponent(ev.arrival);
-      html += `<div>🏁 <a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank">${esc(ev.arrival)}</a></div>`;
+      popDrivingHtml += `<div>🏁 <a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank">${esc(ev.arrival)}</a></div>`;
     }
     if (ev.distanceM != null) {
       const torH = ev.timeOnRoadH ?? calcTimeOnRoad(ev.distanceM / 1609.34);
-      html += `<div class="pop-route-stat">📏 ${fmtDist(ev.distanceM)} &nbsp;·&nbsp; ⏱ ~${fmtDrivingDur(ev.drivingSeconds)} driving &nbsp;·&nbsp; 🕐 ${torH}h on road</div>`;
+      popDrivingHtml += `<div class="pop-route-stat">📏 ${fmtDist(ev.distanceM)} &nbsp;·&nbsp; ⏱ ~${fmtDrivingDur(ev.drivingSeconds)} driving &nbsp;·&nbsp; 🕐 ${torH}h on road</div>`;
     }
     if (ev.departure && ev.arrival) {
       const dir = `https://www.google.com/maps/dir/${encodeURIComponent(ev.departure)}/${encodeURIComponent(ev.arrival)}`;
-      html += `<div><a href="${dir}" target="_blank">↗ Open directions in Google Maps</a></div>`;
+      popDrivingHtml += `<div><a href="${dir}" target="_blank">↗ Open directions in Google Maps</a></div>`;
     }
-    // Link info
+    showDrivingEl = true;
+  }
+
+  // Chain link info — shown for ALL chainable events
+  if (isChainableEv(ev)) {
     const lnkDst = ev.linkedNextId ? events.find(x => x.id === ev.linkedNextId) : null;
     const lnkSrc = linkedPrev(ev.id);
     const popBtnStyle = 'margin-left:6px;background:none;border:1px solid #94a3b8;border-radius:4px;padding:1px 6px;font-size:10px;cursor:pointer';
-    if (lnkDst) html += `<div style="margin-top:2px">⛓ → <em style="font-style:normal">${esc(lnkDst.title)}</em>
+    if (lnkDst) popDrivingHtml += `<div style="margin-top:2px">⛓ → <em style="font-style:normal">${esc(lnkDst.title)}</em>
       <button onclick="disconnectLink(${ev.id});closePop();renderSidebar()" style="${popBtnStyle}">✕ Disconnect</button></div>`;
-    if (lnkSrc) html += `<div style="margin-top:2px">⛓ ← <em style="font-style:normal">${esc(lnkSrc.title)}</em>
+    if (lnkSrc) popDrivingHtml += `<div style="margin-top:2px">⛓ ← <em style="font-style:normal">${esc(lnkSrc.title)}</em>
       <button onclick="disconnectLink(${ev.id});closePop();renderSidebar()" style="${popBtnStyle}">✕ Disconnect</button></div>`;
-    // Reconnect option — show if no forward link but a linkable next event exists
     if (!lnkDst && ev.tripId) {
-      const canRec = events.some(e => e.tripId === ev.tripId && e.category === 'driving'
+      const canRec = events.some(e => e.tripId === ev.tripId && isChainableEv(e)
                                    && e.id !== ev.id && e.start > ev.start && !linkedPrev(e.id));
-      if (canRec) html += `<div style="margin-top:4px">
+      if (canRec) popDrivingHtml += `<div style="margin-top:4px">
         <button onclick="reconnectLink(${ev.id}).then(()=>{closePop();renderSidebar()})"
-          style="background:#f0fdf4;border:1px solid #86efac;color:#166534;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">🔗 Connect to next driving event</button></div>`;
+          style="background:#f0fdf4;border:1px solid #86efac;color:#166534;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">🔗 Connect to next event</button></div>`;
     }
-    drivingEl.innerHTML  = html;
-    drivingEl.style.display = 'flex';
-  } else {
-    drivingEl.style.display = 'none';
+    if (lnkDst || lnkSrc) showDrivingEl = true;
   }
+
+  drivingEl.innerHTML = popDrivingHtml;
+  drivingEl.style.display = showDrivingEl ? 'flex' : 'none';
 
   const pop = document.getElementById('pop');
   pop.style.display = 'block';
