@@ -1,0 +1,6 @@
+trip_name,trip_color,title,category,start,end,description,departure,arrival,distance_m,driving_seconds,time_on_road_h,sleeping_address,event_ref,linked_next_ref
+Alaska (actual),#16a34a,Departure day !!,driving,2026-07-02T22:30:00.000Z,2026-07-03T03:30:00.000Z,Finally ready for the big trip :),"112, Bow Mountain Road","609 Locust St, Rawlins, WY 82301",355199.5,14891.8,5,,1,
+Alaska (actual),#16a34a,Late night dinner @ County 6 | Bar & Grill,dining,2026-07-03T03:30:00.000Z,2026-07-03T05:00:00.000Z,Dinner at the dive bar: County 6 | Bar & Grill. Super nice people and dart playing :),,,,,,,2,
+Alaska (actual),#16a34a,Getting to our first dispersed camping,driving,2026-07-03T05:00:00.000Z,2026-07-03T06:00:00.000Z,First evening on the road :),"609 Locust St, Rawlins, WY 82301","41.69623° N, 107.82742° W",52929.1,2215.2,1,,3,
+Alaska (actual),#16a34a,First night on the road - right next to a train crossing !!!,sleeping,2026-07-03T06:00:00.000Z,2026-07-03T14:00:00.000Z,Do not ever let Emilie pick the night spot :),,,,,,"41.69623° N, 107.82742° W",4,
+Alaska (actual),#16a34a,Lunch @ Jimmy John's,dining,2026-07-03T19:00:00.000Z,2026-07-03T20:00:00.000Z,Good sandwiches & nice people who were very happy to meet folks speaking french !,,,,,,,5,
