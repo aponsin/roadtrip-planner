@@ -465,7 +465,8 @@ body {
 .tviz-color-bar {
   width: 5px; height: 36px; border-radius: 3px; flex-shrink: 0;
 }
-.tviz-title { font-size: 18px; font-weight: 700; color: #0f172a; flex: 1; }
+.tviz-title { font-size: 18px; font-weight: 700; color: #0f172a; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tviz-refresh-btn, .tviz-print-btn, .tviz-close { flex-shrink: 0; }
 .tviz-close {
   width: 28px; height: 28px; border-radius: 6px;
   background: none; border: none; cursor: pointer;
@@ -563,6 +564,16 @@ body {
   transition: background .15s;
 }
 .tviz-map-interact:hover span { background: rgba(0,0,0,.75); }
+.tviz-map-label {
+  background: rgba(15,23,42,.72) !important;
+  border: none !important; box-shadow: 0 1px 4px rgba(0,0,0,.25) !important;
+  color: #fff !important; font-size: 10px !important; font-weight: 600 !important;
+  padding: 2px 7px !important; border-radius: 4px !important;
+  white-space: nowrap !important;
+}
+.tviz-map-label::before { display: none !important; }
+.tviz-map-label-start { background: rgba(37,99,235,.85) !important; }
+.tviz-map-label-end   { background: rgba(37,99,235,.85) !important; }
 .tviz-loc-link:hover { text-decoration: underline; color: #2563eb; }
 .tviz-print-btn {
   display: flex; align-items: center; gap: 5px;
@@ -572,6 +583,15 @@ body {
   transition: all .15s;
 }
 .tviz-print-btn:hover { background: #e2e8f0; color: #0f172a; }
+.tviz-refresh-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: 7px;
+  background: #f1f5f9; border: 1px solid #e2e8f0; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: #475569;
+  transition: all .15s;
+}
+.tviz-refresh-btn:hover { background: #e2e8f0; color: #0f172a; }
+.tviz-refresh-btn:disabled { opacity: .5; cursor: default; }
 @media (max-width: 680px) {
   :root { --lbl-w: 56px; }
 
@@ -919,6 +939,12 @@ body {
 #read-only-banner strong { color: #f1f5f9; }
 #read-only-banner a { color: #7dd3fc; text-decoration: none; margin-left: 12px; }
 #read-only-banner a:hover { text-decoration: underline; }
+#read-only-banner .banner-own-trip-btn {
+  background: #2563eb; color: #fff !important; padding: 3px 10px;
+  border-radius: 5px; font-weight: 600; margin-left: 16px;
+  transition: background .15s;
+}
+#read-only-banner .banner-own-trip-btn:hover { background: #1d4ed8; text-decoration: none !important; }
 body.read-only .hdr { top: 31px; }
 body.read-only .shell { top: calc(var(--hdr) + 31px); }
 body.read-only #trip-viz-overlay { top: 31px; }
@@ -1246,6 +1272,13 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
     <div class="tviz-header">
       <div class="tviz-color-bar" id="tviz-color-bar"></div>
       <div class="tviz-title" id="tviz-title"></div>
+      <button class="tviz-refresh-btn" id="tviz-refresh-btn" onclick="refreshTripMaps()" title="Refresh maps">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2L14 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M14 3v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Refresh maps
+      </button>
       <button class="tviz-print-btn" onclick="printTripViz()" title="Print / Save as PDF">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect x="3" y="1" width="10" height="7" rx="1" stroke="currentColor" stroke-width="1.4"/>
@@ -1316,6 +1349,52 @@ const _geoCache  = {}; // address string → {lat,lon}
 const _routeCache = {}; // "dep|arr" → GeoJSON geometry or null
 let   _activeLegMapId = null; // currently interactive map evId
 
+// ── MAP CACHE (localStorage persistence) ───────────────────────────────────
+const GEO_TTL   = 30 * 24 * 60 * 60 * 1000; // geocodes: 30 days
+const ROUTE_TTL =  7 * 24 * 60 * 60 * 1000; // routes:    7 days
+
+function _loadMapCaches() {
+  const now = Date.now();
+  try {
+    const raw = localStorage.getItem('rtp4_geo_cache');
+    if (raw) {
+      for (const [k, v] of Object.entries(JSON.parse(raw))) {
+        if (v && v.ts && (now - v.ts) < GEO_TTL)
+          _geoCache[k] = { lat: v.lat, lon: v.lon };
+      }
+    }
+  } catch {}
+  try {
+    const raw = localStorage.getItem('rtp4_route_cache');
+    if (raw) {
+      for (const [k, v] of Object.entries(JSON.parse(raw))) {
+        if (v && v.ts && (now - v.ts) < ROUTE_TTL)
+          _routeCache[k] = v.geom ?? null;
+      }
+    }
+  } catch {}
+}
+
+function _saveGeoCache() {
+  try {
+    const ts = Date.now(), out = {};
+    for (const [k, v] of Object.entries(_geoCache))
+      if (v) out[k] = { lat: v.lat, lon: v.lon, ts };
+    localStorage.setItem('rtp4_geo_cache', JSON.stringify(out));
+  } catch {}
+}
+
+function _saveRouteCache() {
+  try {
+    const ts = Date.now(), out = {};
+    for (const [k, v] of Object.entries(_routeCache))
+      out[k] = { geom: v, ts };
+    localStorage.setItem('rtp4_route_cache', JSON.stringify(out));
+  } catch {}
+}
+
+_loadMapCaches(); // hydrate from localStorage immediately
+
 function _deactivateLegMap(evId) {
   if (!tvizMaps[evId]) return;
   tvizMaps[evId].scrollWheelZoom.disable();
@@ -1352,19 +1431,24 @@ document.addEventListener('click', (e) => {
 // Background prewarming: geocode + route all driving legs respecting rate limits
 async function warmLegMaps() {
   const legs = events.filter(ev => ev.category === 'driving' && ev.departure && ev.arrival);
+  let geoChanged = false, routeChanged = false;
   for (const ev of legs) {
     if (!_geoCache[ev.departure]) {
       try { _geoCache[ev.departure] = await geocode(ev.departure); } catch { _geoCache[ev.departure] = null; }
+      if (_geoCache[ev.departure]) { geoChanged = true; _saveGeoCache(); }
       await new Promise(r => setTimeout(r, 1100));
     }
     if (!_geoCache[ev.arrival]) {
       try { _geoCache[ev.arrival] = await geocode(ev.arrival); } catch { _geoCache[ev.arrival] = null; }
+      if (_geoCache[ev.arrival]) { geoChanged = true; _saveGeoCache(); }
       await new Promise(r => setTimeout(r, 1100));
     }
     const routeKey = ev.departure + '|' + ev.arrival;
     if (!(routeKey in _routeCache)) {
       const dep = _geoCache[ev.departure], arr = _geoCache[ev.arrival];
       _routeCache[routeKey] = (dep && arr) ? await fetchLegRoute(dep, arr) : null;
+      routeChanged = true;
+      _saveRouteCache();
       await new Promise(r => setTimeout(r, 400));
     }
   }
@@ -1424,7 +1508,7 @@ async function loadSharedView(id) {
     document.getElementById('sb').classList.add('closed');
 
     const tripId = payload.trip.id;
-    banner.innerHTML = `👁 Read-only shared trip &nbsp;·&nbsp; <strong>${esc(payload.trip.name)}</strong><a href="#" onclick="openTripViz(${tripId});return false">View Trip Summary →</a>`;
+    banner.innerHTML = `👁 Read-only shared trip &nbsp;·&nbsp; <strong>${esc(payload.trip.name)}</strong><a href="#" onclick="openTripViz(${tripId});return false">View Trip Summary →</a><a href="${location.pathname}" class="banner-own-trip-btn">✨ Plan your own trip</a>`;
 
     renderSidebar();
     render();
@@ -2021,10 +2105,37 @@ function openTripViz(tripId) {
   document.getElementById('tviz-color-bar').style.background = trip.color;
   document.getElementById('tviz-title').textContent = trip.name;
   document.getElementById('tviz-body').innerHTML = bodyHtml;
-  document.getElementById('trip-viz-overlay').classList.add('open');
+  const overlay = document.getElementById('trip-viz-overlay');
+  overlay.dataset.tripId = tripId;
+  overlay.classList.add('open');
   document.getElementById('tviz-body').scrollTop = 0;
   // Init leg maps after modal is visible (Leaflet needs container dimensions)
   setTimeout(initAllLegMaps, 80);
+}
+
+async function refreshTripMaps() {
+  const btn = document.getElementById('tviz-refresh-btn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
+
+  // Bust route cache for all visible leg maps (geocodes stay — addresses don't change)
+  document.querySelectorAll('.tviz-leg-map').forEach(c => {
+    const key = c.dataset.dep + '|' + c.dataset.arr;
+    delete _routeCache[key];
+  });
+  _saveRouteCache();
+
+  // Destroy existing Leaflet instances so initAllLegMaps rebuilds them
+  for (const id of Object.keys(tvizMaps)) {
+    try { tvizMaps[id].remove(); } catch (_) {}
+    delete tvizMaps[id];
+  }
+  if (_activeLegMapId) _activeLegMapId = null;
+
+  // Re-render map containers then reload
+  const currentTripId = parseInt(document.getElementById('trip-viz-overlay').dataset.tripId || '0');
+  if (currentTripId) openTripViz(currentTripId);
+
+  if (btn) { btn.disabled = false; btn.style.opacity = ''; }
 }
 
 function closeTripViz(e) {
@@ -2052,6 +2163,7 @@ async function fetchLegRoute(dep, arr) {
 }
 
 async function initLegMap(container, tripColor) {
+  const color = tripColor || '#3b82f6';
   if (typeof L === 'undefined') {
     container.innerHTML = '<div class="tviz-leg-map-loading">Map library not loaded</div>';
     return;
@@ -2061,31 +2173,28 @@ async function initLegMap(container, tripColor) {
   const arr  = container.dataset.arr;
 
   // Destroy old instance if re-opening
-  if (tvizMaps[evId]) { tvizMaps[evId].remove(); delete tvizMaps[evId]; }
+  if (tvizMaps[evId]) { try { tvizMaps[evId].remove(); } catch(_) {} delete tvizMaps[evId]; }
 
-  // Resolve geocodes — use cache if already warmed, otherwise fetch now
-  if (!_geoCache[dep]) _geoCache[dep] = await geocode(dep).catch(() => null);
-  if (!_geoCache[arr]) _geoCache[arr] = await geocode(arr).catch(() => null);
+  // Resolve geocodes — use cache if already warmed, otherwise fetch and persist
+  if (!_geoCache[dep]) { try { _geoCache[dep] = await geocode(dep); } catch(_) { _geoCache[dep] = null; } if (_geoCache[dep]) _saveGeoCache(); }
+  if (!_geoCache[arr]) { try { _geoCache[arr] = await geocode(arr); } catch(_) { _geoCache[arr] = null; } if (_geoCache[arr]) _saveGeoCache(); }
   const depGeo = _geoCache[dep], arrGeo = _geoCache[arr];
+  console.log('[map]', dep, '→', arr, '| depGeo:', depGeo, '| arrGeo:', arrGeo);
   if (!depGeo || !arrGeo) {
-    container.innerHTML = '<div class="tviz-leg-map-loading">Map unavailable (could not locate address)</div>';
+    container.innerHTML = '<div class="tviz-leg-map-loading">Map unavailable — could not geocode address<br><small>' + (!depGeo ? dep : arr) + '</small></div>';
     return;
   }
 
-  // Resolve route — use cache if already warmed
+  // Resolve route — use cache if already warmed, otherwise fetch and persist
   const routeKey = dep + '|' + arr;
-  if (!(routeKey in _routeCache)) _routeCache[routeKey] = await fetchLegRoute(depGeo, arrGeo);
+  if (!(routeKey in _routeCache)) { _routeCache[routeKey] = await fetchLegRoute(depGeo, arrGeo); _saveRouteCache(); }
   const route = _routeCache[routeKey];
+  console.log('[map] route:', route ? route.type + ' ' + route.coordinates?.length + ' pts' : 'null (fallback line)');
 
-  // Clear loading indicator and init map (scroll/drag disabled until user clicks in)
   container.innerHTML = '';
-  const map = L.map(container, {
-    zoomControl: true, attributionControl: false,
-    scrollWheelZoom: false, dragging: false,
-  });
+  const map = L.map(container, { zoomControl: true, attributionControl: false, scrollWheelZoom: false, dragging: false });
   tvizMaps[evId] = map;
 
-  // Bottom-right "Click to interact" pill — uses global activate/deactivate system
   const interactOverlay = document.createElement('div');
   interactOverlay.className = 'tviz-map-interact';
   interactOverlay.innerHTML = '<span>Click to interact</span>';
@@ -2093,35 +2202,38 @@ async function initLegMap(container, tripColor) {
   interactOverlay.addEventListener('click', (e) => { e.stopPropagation(); _activateLegMap(evId); });
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
-
-  // Tell Leaflet the real container size (important inside scrollable modals)
   map.invalidateSize();
 
+  // Leaflet wants [lat, lon]; GeoJSON/OSRM coords are [lon, lat] — convert explicitly
   const depLL = [depGeo.lat, depGeo.lon];
   const arrLL = [arrGeo.lat, arrGeo.lon];
 
   let bounds;
-  try {
-    if (route) {
-      // Wrap bare geometry in a Feature so L.geoJSON renders it reliably
-      const feature = { type: 'Feature', geometry: route, properties: {} };
-      const line = L.geoJSON(feature, { style: { color: tripColor, weight: 4, opacity: 0.85 } }).addTo(map);
+  const routeBlue = '#2563eb'; // always bright blue so routes stand out
+  if (route?.coordinates?.length) {
+    try {
+      const latLngs = route.coordinates.map(([lon, lat]) => [lat, lon]);
+      const line = L.polyline(latLngs, { color: routeBlue, weight: 4, opacity: 0.9 }).addTo(map);
       bounds = line.getBounds();
-    }
-  } catch (_) { bounds = null; }
-
-  if (!bounds || !bounds.isValid()) {
-    // Fallback: straight dashed line between geocoded points
-    const line = L.polyline([depLL, arrLL], { color: tripColor, weight: 3, dashArray: '6,6' }).addTo(map);
-    bounds = line.getBounds();
+      console.log('[map] road route drawn, bounds:', bounds.isValid());
+    } catch(e) { console.warn('[map] route draw error:', e); bounds = null; }
   }
 
-  L.circleMarker(depLL, { radius: 7, fillColor: '#16a34a', color: '#fff', weight: 2, fillOpacity: 1 })
-    .bindTooltip(dep, { permanent: false }).addTo(map);
-  L.circleMarker(arrLL, { radius: 7, fillColor: tripColor, color: '#fff', weight: 2, fillOpacity: 1 })
-    .bindTooltip(arr, { permanent: false }).addTo(map);
+  if (!bounds || !bounds.isValid()) {
+    // Straight dashed fallback
+    const line = L.polyline([depLL, arrLL], { color: routeBlue, weight: 3, dashArray: '6,6', opacity: 0.7 }).addTo(map);
+    bounds = line.getBounds();
+    console.log('[map] using straight-line fallback');
+  }
 
-  if (bounds && bounds.isValid()) {
+  L.circleMarker(depLL, { radius: 7, fillColor: '#2563eb', color: '#fff', weight: 2, fillOpacity: 1 })
+    .bindTooltip('Start', { permanent: true, direction: 'top', className: 'tviz-map-label tviz-map-label-start' })
+    .addTo(map);
+  L.circleMarker(arrLL, { radius: 7, fillColor: '#2563eb', color: '#fff', weight: 2, fillOpacity: 1 })
+    .bindTooltip('End', { permanent: true, direction: 'bottom', className: 'tviz-map-label tviz-map-label-end' })
+    .addTo(map);
+
+  if (bounds?.isValid()) {
     map.fitBounds(bounds, { padding: [24, 24] });
   } else {
     map.setView(depLL, 8);
@@ -2131,13 +2243,16 @@ async function initLegMap(container, tripColor) {
 async function initAllLegMaps() {
   const containers = document.querySelectorAll('.tviz-leg-map');
   for (const c of containers) {
+    const dep = c.dataset.dep, arr = c.dataset.arr;
+    const routeKey = dep + '|' + arr;
+    const needsApi = !_geoCache[dep] || !_geoCache[arr] || !(routeKey in _routeCache);
     try {
       await initLegMap(c, c.dataset.color);
     } catch (err) {
-      c.innerHTML = '<div class="tviz-leg-map-loading">Map failed to load</div>';
+      console.error('[map] initLegMap threw:', err);
+      c.innerHTML = '<div class="tviz-leg-map-loading">Map failed to load — see browser console</div>';
     }
-    // Small yield between maps so the UI stays responsive
-    await new Promise(r => setTimeout(r, 30));
+    await new Promise(r => setTimeout(r, needsApi ? 1200 : 30));
   }
 }
 
@@ -3692,7 +3807,17 @@ function submitForm() {
     // Preserve existing link if new category is still chainable, otherwise drop it
     const chainableCats = ['driving', 'sleeping', 'dining', 'sightseeing'];
     const keepLink = chainableCats.includes(cat) ? savedEv?.linkedNextId : null;
-    if (savedEv) Object.assign(savedEv, { title, category: cat, tripId, start, end, description: desc, ...drivingFields, linkedNextId: keepLink ?? null });
+    if (savedEv) {
+      // Bust route cache if departure or arrival changed on a driving event
+      if (savedEv.category === 'driving' && (savedEv.departure !== departure || savedEv.arrival !== arrival)) {
+        const oldKey = savedEv.departure + '|' + savedEv.arrival;
+        delete _routeCache[oldKey];
+        _saveRouteCache();
+        // Re-warm the new leg in background
+        setTimeout(() => warmLegMaps(), 500);
+      }
+      Object.assign(savedEv, { title, category: cat, tripId, start, end, description: desc, ...drivingFields, linkedNextId: keepLink ?? null });
+    }
   } else {
     savedEv = { id: nextEvId++, title, category: cat, tripId, start, end, description: desc, ...drivingFields, linkedNextId: null };
     events.push(savedEv);
