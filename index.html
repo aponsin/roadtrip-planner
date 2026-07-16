@@ -564,6 +564,16 @@ body {
   transition: background .15s;
 }
 .tviz-map-interact:hover span { background: rgba(0,0,0,.75); }
+.tviz-map-refresh {
+  position: absolute; top: 8px; right: 8px; z-index: 501;
+  background: rgba(255,255,255,.88); border: 1px solid rgba(0,0,0,.12);
+  border-radius: 6px; width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.15);
+  transition: background .15s;
+}
+.tviz-map-refresh:hover { background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.2); }
+.tviz-map-refresh svg { display: block; }
 .tviz-map-label {
   background: rgba(15,23,42,.72) !important;
   border: none !important; box-shadow: 0 1px 4px rgba(0,0,0,.25) !important;
@@ -1272,13 +1282,6 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
     <div class="tviz-header">
       <div class="tviz-color-bar" id="tviz-color-bar"></div>
       <div class="tviz-title" id="tviz-title"></div>
-      <button class="tviz-refresh-btn" id="tviz-refresh-btn" onclick="refreshTripMaps()" title="Refresh maps">
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2L14 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M14 3v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        Refresh maps
-      </button>
       <button class="tviz-print-btn" onclick="printTripViz()" title="Print / Save as PDF">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect x="3" y="1" width="10" height="7" rx="1" stroke="currentColor" stroke-width="1.4"/>
@@ -2113,6 +2116,21 @@ function openTripViz(tripId) {
   setTimeout(initAllLegMaps, 80);
 }
 
+async function refreshLegMap(evId) {
+  const container = document.getElementById('leg-map-' + evId);
+  if (!container) return;
+  // Bust route cache for this specific leg so it re-fetches
+  const routeKey = container.dataset.dep + '|' + container.dataset.arr;
+  delete _routeCache[routeKey];
+  _saveRouteCache();
+  // Reset container and re-init
+  if (tvizMaps[evId]) { try { tvizMaps[evId].remove(); } catch(_) {} delete tvizMaps[evId]; }
+  if (_activeLegMapId === evId) _activeLegMapId = null;
+  container.innerHTML = '<div class="tviz-leg-map-loading">Refreshing map…</div>';
+  try { await initLegMap(container, container.dataset.color); }
+  catch(e) { container.innerHTML = '<div class="tviz-leg-map-loading">Failed to reload — see console</div>'; }
+}
+
 async function refreshTripMaps() {
   const btn = document.getElementById('tviz-refresh-btn');
   if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
@@ -2200,6 +2218,14 @@ async function initLegMap(container, tripColor) {
   interactOverlay.innerHTML = '<span>Click to interact</span>';
   container.appendChild(interactOverlay);
   interactOverlay.addEventListener('click', (e) => { e.stopPropagation(); _activateLegMap(evId); });
+
+  // Per-map refresh button (top-right)
+  const refreshBtn = document.createElement('button');
+  refreshBtn.className = 'tviz-map-refresh';
+  refreshBtn.title = 'Refresh map';
+  refreshBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2L14 3" stroke="#475569" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 3v3h-3" stroke="#475569" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  refreshBtn.addEventListener('click', (e) => { e.stopPropagation(); refreshLegMap(evId); });
+  container.appendChild(refreshBtn);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
   map.invalidateSize();
