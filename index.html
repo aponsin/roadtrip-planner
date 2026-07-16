@@ -546,22 +546,26 @@ body {
   :root { --hdr: 92px; }
   .hdr { flex-wrap: wrap; align-content: center; height: var(--hdr); padding: 0 10px; gap: 6px 8px; }
 
-  /* Hide title & logo to save space */
-  .hdr-title { display: none; }
-  .hdr-logo  { display: none; }
-  .period-lbl { font-size: 11px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Hide title, logo, and date picker (arrows + label are enough) */
+  .hdr-title  { display: none; }
+  .hdr-logo   { display: none; }
+  #date-pick  { display: none; }
 
-  /* Spacer becomes a full-width invisible divider → forces row break */
+  /* Row 1: hamburger + nav arrows + period label (fill remaining width) */
+  .period-nav { flex: 1; justify-content: flex-end; }
+  .period-lbl { flex: 1; text-align: center; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: none; }
+
+  /* Spacer becomes a full-width invisible divider → forces row 2 */
   .hdr-spacer { width: 100%; height: 0; flex: none; margin: 0; }
 
-  /* Row 2: sync + new event pushed to the right */
+  /* Row 2: sync + new event, right-aligned */
   .btn-gh-sync { padding: 5px 10px; margin-left: auto; }
   .btn-gh-sync .sync-label { display: inline; font-size: 12px; }
 
   /* Bigger nav arrows */
-  .period-nav .hdr-icon-btn { font-size: 22px; padding: 4px 10px; }
+  .period-nav .hdr-icon-btn { font-size: 20px; padding: 4px 10px; }
 
-  /* New event button: full text, nicely sized */
+  /* New event button */
   .btn-new-event { padding: 6px 12px; font-size: 13px; }
 
   /* Form: full-screen bottom sheet */
