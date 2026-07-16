@@ -2749,17 +2749,20 @@ function openForm(evObj, defaultDate, defaultTripId) {
 
 // ── FORM EVENT NAVIGATION ──────────────────────────────────────────────────────
 // Returns all events sorted by start ascending (same trip first if editing, then rest)
-function formNavSortedEvents() {
-  return [...events].sort((a, b) => a.start - b.start);
+function formNavSortedEvents(tripId) {
+  // tripId === undefined → no filter (old behaviour); otherwise filter to same trip
+  return [...events]
+    .filter(e => tripId === undefined || e.tripId === tripId)
+    .sort((a, b) => a.start - b.start);
 }
 
 function updateFormNav() {
   const prev = document.getElementById('form-nav-prev');
   const next = document.getElementById('form-nav-next');
   if (!prev || !next) return;
-  // Hide nav when creating a new event (no editingId)
   if (!editingId) { prev.disabled = true; next.disabled = true; return; }
-  const sorted = formNavSortedEvents();
+  const cur = events.find(e => e.id === editingId);
+  const sorted = formNavSortedEvents(cur ? cur.tripId : undefined);
   const idx = sorted.findIndex(e => e.id === editingId);
   prev.disabled = idx <= 0;
   next.disabled = idx < 0 || idx >= sorted.length - 1;
@@ -2767,7 +2770,8 @@ function updateFormNav() {
 
 function formNavStep(dir) {
   if (!editingId) return;
-  const sorted = formNavSortedEvents();
+  const cur = events.find(e => e.id === editingId);
+  const sorted = formNavSortedEvents(cur ? cur.tripId : undefined);
   const idx = sorted.findIndex(e => e.id === editingId);
   const target = sorted[idx + dir];
   if (target) openForm(target);
@@ -3418,7 +3422,8 @@ function updatePopNav() {
   const next = document.getElementById('pop-nav-next');
   if (!prev || !next) return;
   if (!popEvId) { prev.disabled = true; next.disabled = true; return; }
-  const sorted = formNavSortedEvents();
+  const cur = events.find(e => e.id === popEvId);
+  const sorted = formNavSortedEvents(cur ? cur.tripId : undefined);
   const idx = sorted.findIndex(e => e.id === popEvId);
   prev.disabled = idx <= 0;
   next.disabled = idx < 0 || idx >= sorted.length - 1;
@@ -3426,7 +3431,8 @@ function updatePopNav() {
 
 function popNavStep(dir) {
   if (!popEvId) return;
-  const sorted = formNavSortedEvents();
+  const cur = events.find(e => e.id === popEvId);
+  const sorted = formNavSortedEvents(cur ? cur.tripId : undefined);
   const idx = sorted.findIndex(e => e.id === popEvId);
   const target = sorted[idx + dir];
   if (!target) return;
@@ -3559,6 +3565,8 @@ function dragUp(e) {
 }
 
 function dayUnderMouse(e) {
+  const VD = getViewDays();
+  const VM = getViewMs();
   const rows = document.querySelectorAll('.week-row');
   for (let w = 0; w < rows.length; w++) {
     const rr = rows[w].getBoundingClientRect();
@@ -3566,8 +3574,8 @@ function dayUnderMouse(e) {
     const tl = rows[w].querySelector('.timeline');
     const tr = tl.getBoundingClientRect();
     const pct = Math.max(0, Math.min(0.9999, (e.clientX - tr.left) / tr.width));
-    const dayIdx = Math.floor(pct * 7);
-    return addDays(new Date(viewStart.getTime() + w * WK), dayIdx);
+    const dayIdx = Math.floor(pct * VD);
+    return addDays(new Date(viewStart.getTime() + w * VM), dayIdx);
   }
   return null;
 }
