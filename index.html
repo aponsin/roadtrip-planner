@@ -1186,7 +1186,9 @@ function init() {
   loadState();
   if (isMobile()) {
     const today = new Date();
-    viewStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    // Center today in the 3-day mobile view (start = today − 1 day)
+    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    viewStart = new Date(todayMidnight.getTime() - DAY);
     sbOpen = false;
     document.getElementById('sb').classList.add('closed');
   }
