@@ -883,9 +883,45 @@ body {
 .pop-btn:hover { background: #e2e8f0; }
 .pop-del { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
 .pop-del:hover { background: #fee2e2; }
+
+/* ── READ-ONLY MODE ─────────────────────────────── */
+body.read-only .btn-new-event,
+body.read-only .btn-gh-sync,
+body.read-only .btn-new-trip,
+body.read-only .btn-import-trip,
+body.read-only .trip-acts,
+body.read-only .pop-btn { display: none !important; }
+
+/* ── SHARE MODAL ────────────────────────────────── */
+.gh-modal {
+  display: none; position: fixed; inset: 0; z-index: 9100;
+  background: rgba(15,23,42,.55); backdrop-filter: blur(3px);
+  align-items: center; justify-content: center;
+}
+.gh-modal.open { display: flex; }
+.gh-panel {
+  background: #fff; border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.22);
+  width: min(420px, 94vw);
+  display: flex; flex-direction: column;
+}
+.gh-head {
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid #e2e8f0; padding: 14px 20px;
+  font-size: 15px; font-weight: 700; color: #0f172a;
+}
+.gh-head span { flex: 1; }
+.gh-close {
+  width: 28px; height: 28px; border-radius: 6px;
+  background: none; border: none; cursor: pointer;
+  font-size: 16px; color: #94a3b8; display: flex; align-items: center; justify-content: center;
+}
+.gh-close:hover { background: #f1f5f9; color: #0f172a; }
 </style>
 </head>
 <body>
+
+<div id="read-only-banner" style="display:none;background:#1e3a5f;color:#fff;text-align:center;font-size:12px;padding:6px 16px;letter-spacing:.3px"></div>
 
 <!-- ── HEADER ─────────────────────────────────────────────── -->
 <header class="hdr">
@@ -958,6 +994,23 @@ body {
       <button class="gh-btn" style="background:#f1f5f9;color:#475569;border:1px solid #e2e8f0" onclick="cancelGhLoad()">✕ Cancel</button>
     </div>
     <div class="gh-log" id="gh-log"></div>
+  </div>
+</div>
+
+<!-- Share Trip Modal -->
+<div id="share-modal" class="gh-modal" onclick="if(event.target===this)closeShareModal()">
+  <div class="gh-panel" style="max-width:420px">
+    <div class="gh-head">
+      <span>Trip shared! 🔗</span>
+      <button class="gh-close" onclick="closeShareModal()">✕</button>
+    </div>
+    <div style="padding:16px 20px 20px">
+      <p style="margin:0 0 12px;font-size:13px;color:#475569">Anyone with this link can view the trip (read-only):</p>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="share-url-input" type="text" readonly style="flex:1;font-size:12px;padding:7px 8px;border:1.5px solid #e2e8f0;border-radius:6px;background:#f8fafc;color:#0f172a;min-width:0">
+        <button id="share-copy-btn" onclick="copyShareUrl()" style="padding:7px 14px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">Copy</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1214,9 +1267,64 @@ let newTripColor = TRIP_COLORS[0];
 let newTripName  = '';
 let lastTripId   = null;
 let routeData    = null; // { distanceM, drivingSeconds } after a successful fetch
+let readOnlyMode = false;
 
 // ── BOOT ───────────────────────────────────────────────────────────────────────
+async function loadSharedView(id) {
+  // Basic setup so render() works
+  const today = new Date();
+  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  if (isMobile()) {
+    viewStart = new Date(todayMidnight.getTime() - 13 * DAY);
+  } else {
+    viewStart = monday(new Date());
+  }
+  buildTimeSelect();
+
+  const banner = document.getElementById('read-only-banner');
+  banner.style.display = '';
+  banner.textContent = 'Loading shared trip…';
+
+  try {
+    const url = `https://raw.githubusercontent.com/aponsin/roadtrip-planner/main/shared/${id}.json`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('not found');
+    const payload = await resp.json();
+
+    // Load trip
+    trips = [payload.trip];
+    nextTripId = payload.trip.id + 1;
+
+    // Load events with Date reconstruction
+    events = (payload.events || []).map(ev => ({
+      ...ev,
+      start: new Date(ev.start),
+      end:   new Date(ev.end),
+    }));
+    nextEvId = events.length ? Math.max(...events.map(e => e.id)) + 1 : 1;
+
+    readOnlyMode = true;
+    document.body.classList.add('read-only');
+
+    banner.textContent = `Viewing shared trip: ${payload.trip.name} (read-only)`;
+
+    renderSidebar();
+    render();
+  } catch (err) {
+    banner.textContent = 'Shared link not found or expired.';
+    renderSidebar();
+    render();
+  }
+}
+
 function init() {
+  // Check for shared trip link first
+  const shareId = new URLSearchParams(location.search).get('share');
+  if (shareId) {
+    loadSharedView(shareId);
+    return;
+  }
+
   loadState();
   if (isMobile()) {
     const today = new Date();
@@ -1505,6 +1613,7 @@ function renderSidebar() {
         ${nameHTML}
         <div class="trip-acts">
           <button class="trip-act-btn" onclick="openTripViz(${t.id})" title="Trip summary"><svg width="13" height="10" viewBox="0 0 13 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 5C1 5 3.2 1.5 6.5 1.5C9.8 1.5 12 5 12 5C12 5 9.8 8.5 6.5 8.5C3.2 8.5 1 5 1 5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="6.5" cy="5" r="1.6" fill="currentColor"/></svg></button>
+          <button class="trip-act-btn" onclick="ghShareTrip(${t.id})" title="Share trip"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="9.5" cy="2.5" r="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="9.5" cy="9.5" r="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="2.5" cy="6" r="1.5" stroke="currentColor" stroke-width="1.3"/><line x1="4" y1="6" x2="8" y2="3.2" stroke="currentColor" stroke-width="1.3"/><line x1="4" y1="6" x2="8" y2="8.8" stroke="currentColor" stroke-width="1.3"/></svg></button>
           <button class="trip-act-btn" onclick="exportTrip(${t.id})" title="Export to CSV">⬇</button>
           <button class="trip-act-btn" onclick="startRename(${t.id})" title="Rename">✏</button>
           <button class="trip-act-btn del" onclick="deleteTrip(${t.id})" title="Delete">✕</button>
@@ -1898,6 +2007,77 @@ function openGHModal() {
 }
 function closeGHModal() {
   document.getElementById('gh-modal').classList.remove('open');
+}
+
+function closeShareModal() {
+  document.getElementById('share-modal').classList.remove('open');
+}
+
+function copyShareUrl() {
+  const input = document.getElementById('share-url-input');
+  input.select();
+  navigator.clipboard.writeText(input.value).catch(() => {});
+  const btn = document.getElementById('share-copy-btn');
+  btn.textContent = 'Copied!';
+  setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+}
+
+async function ghShareTrip(tripId) {
+  const cfg = ghConfig();
+  if (!cfg.token || !cfg.repo) {
+    alert('Configure GitHub sync first (click the Sync button in the header).');
+    return;
+  }
+  if (!cfg.repo.includes('/')) {
+    alert('Repository must be in "owner/repo" format.');
+    return;
+  }
+  const [owner, repo] = cfg.repo.split('/');
+  const token = cfg.token;
+
+  const trip = trips.find(t => t.id === tripId);
+  if (!trip) return;
+
+  const tripEvents = events
+    .filter(e => e.tripId === tripId)
+    .map(ev => ({ ...ev, start: ev.start.toISOString(), end: ev.end.toISOString() }));
+
+  // Generate share ID: {slug}-{8hex}
+  const slug = ghSanitize(trip.name) || 'trip';
+  const hexBytes = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  const shareId = `${slug}-${hexBytes}`;
+
+  const payload = {
+    version: '1.1',
+    generatedAt: Date.now(),
+    trip: { ...trip },
+    events: tripEvents,
+  };
+
+  const filePath = `shared/${shareId}.json`;
+
+  try {
+    // Check if file already exists (to get SHA for update)
+    let existingSha;
+    const existing = await ghApi('GET', filePath, null, token, owner, repo);
+    if (existing) existingSha = existing.sha;
+
+    const putBody = {
+      message: `Share trip: ${trip.name}`,
+      content: ghEncode(JSON.stringify(payload)),
+    };
+    if (existingSha) putBody.sha = existingSha;
+
+    await ghApi('PUT', filePath, putBody, token, owner, repo);
+
+    const shareUrl = `https://${owner}.github.io/${repo}/?share=${shareId}`;
+    document.getElementById('share-url-input').value = shareUrl;
+    document.getElementById('share-copy-btn').textContent = 'Copy';
+    document.getElementById('share-modal').classList.add('open');
+  } catch (err) {
+    alert(`Failed to share trip: ${err.message}`);
+  }
 }
 
 function ghLog(msg, type = 'info') {
@@ -2644,6 +2824,7 @@ function positionOverlay() {
 }
 
 function openForm(evObj, defaultDate, defaultTripId) {
+  if (readOnlyMode) return;
   const overlay = document.getElementById('form-overlay');
   positionOverlay();
   overlay.style.display = '';
