@@ -287,7 +287,17 @@ body {
   overflow-y: auto;
 }
 
-.form-head { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 10px; }
+.form-head-row { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.form-head { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; flex: 1; text-align: center; }
+.form-nav-btn {
+  width: 28px; height: 28px; flex-shrink: 0;
+  background: #f1f5f9; border: 1px solid #e2e8f0;
+  border-radius: 6px; font-size: 18px; line-height: 1;
+  color: #475569; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s;
+}
+.form-nav-btn:hover:not(:disabled) { background: #e2e8f0; color: #0f172a; }
+.form-nav-btn:disabled { opacity: .3; cursor: default; }
 .form-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .ff { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 130px; }
 .ff.wide { flex: 2; min-width: 180px; }
@@ -939,7 +949,11 @@ body {
   <!-- Form Modal (injected into cal-area at runtime, see openForm) -->
   <div id="form-overlay" class="form-overlay closed" onclick="onOverlayClick(event)" style="display:none">
   <div id="form-panel" class="form-panel">
-    <div class="form-head" id="form-head">New Event</div>
+    <div class="form-head-row">
+      <button class="form-nav-btn" id="form-nav-prev" onclick="formNavStep(-1)" title="Previous event">‹</button>
+      <div class="form-head" id="form-head">New Event</div>
+      <button class="form-nav-btn" id="form-nav-next" onclick="formNavStep(1)"  title="Next event">›</button>
+    </div>
     <div class="form-row">
       <div class="ff wide">
         <label>Title</label>
@@ -1186,10 +1200,10 @@ function init() {
   loadState();
   if (isMobile()) {
     const today = new Date();
-    // Place today in the centre of row 3 (out of ~6 visible rows).
-    // Each row = 3 days, so go back 2 full rows + 1 centre offset = 7 days.
+    // Place today in the centre of row 5 (out of ~6 visible rows).
+    // Each row = 3 days, so go back 4 full rows + 1 centre offset = 13 days.
     const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    viewStart = new Date(todayMidnight.getTime() - 7 * DAY);
+    viewStart = new Date(todayMidnight.getTime() - 13 * DAY);
     sbOpen = false;
     document.getElementById('sb').classList.add('closed');
   }
@@ -2709,7 +2723,34 @@ function openForm(evObj, defaultDate, defaultTripId) {
     updateDiningLink();
     updateSightseeingLink();
   }
+  updateFormNav();
   setTimeout(() => document.getElementById('f-title').focus(), 60);
+}
+
+// ── FORM EVENT NAVIGATION ──────────────────────────────────────────────────────
+// Returns all events sorted by start ascending (same trip first if editing, then rest)
+function formNavSortedEvents() {
+  return [...events].sort((a, b) => a.start - b.start);
+}
+
+function updateFormNav() {
+  const prev = document.getElementById('form-nav-prev');
+  const next = document.getElementById('form-nav-next');
+  if (!prev || !next) return;
+  // Hide nav when creating a new event (no editingId)
+  if (!editingId) { prev.disabled = true; next.disabled = true; return; }
+  const sorted = formNavSortedEvents();
+  const idx = sorted.findIndex(e => e.id === editingId);
+  prev.disabled = idx <= 0;
+  next.disabled = idx < 0 || idx >= sorted.length - 1;
+}
+
+function formNavStep(dir) {
+  if (!editingId) return;
+  const sorted = formNavSortedEvents();
+  const idx = sorted.findIndex(e => e.id === editingId);
+  const target = sorted[idx + dir];
+  if (target) openForm(target);
 }
 
 function closeForm() {
