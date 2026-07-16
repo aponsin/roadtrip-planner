@@ -540,6 +540,29 @@ body {
 .tviz-route-arrow { color: #94a3b8; }
 .tviz-no-events { color: #94a3b8; font-size: 13px; font-style: italic; padding: 20px 0; text-align: center; }
 .tviz-loc-link { color: #0f172a; font-weight: 600; text-decoration: none; }
+.tviz-leg-map {
+  height: 200px; margin-top: 10px;
+  border-radius: 8px; overflow: hidden;
+  border: 1px solid #e2e8f0;
+  background: #f1f5f9;
+  position: relative;
+}
+.tviz-leg-map-loading {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: #94a3b8; background: #f8fafc; z-index: 1;
+}
+.tviz-map-interact {
+  position: absolute; bottom: 8px; right: 8px; z-index: 500;
+  cursor: pointer;
+}
+.tviz-map-interact span {
+  background: rgba(0,0,0,.55); color: #fff;
+  font-size: 11px; padding: 4px 10px; border-radius: 99px;
+  display: block; letter-spacing: .3px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  transition: background .15s;
+}
+.tviz-map-interact:hover span { background: rgba(0,0,0,.75); }
 .tviz-loc-link:hover { text-decoration: underline; color: #2563eb; }
 .tviz-print-btn {
   display: flex; align-items: center; gap: 5px;
@@ -936,6 +959,8 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
 }
 .gh-close:hover { background: #f1f5f9; color: #0f172a; }
 </style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" crossorigin="">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin=""></script>
 </head>
 <body>
 
@@ -1286,6 +1311,64 @@ let newTripName  = '';
 let lastTripId   = null;
 let routeData    = null; // { distanceM, drivingSeconds } after a successful fetch
 let readOnlyMode = false;
+const tvizMaps = {}; // keyed by ev.id, holds L.Map instances for cleanup
+const _geoCache  = {}; // address string → {lat,lon}
+const _routeCache = {}; // "dep|arr" → GeoJSON geometry or null
+let   _activeLegMapId = null; // currently interactive map evId
+
+function _deactivateLegMap(evId) {
+  if (!tvizMaps[evId]) return;
+  tvizMaps[evId].scrollWheelZoom.disable();
+  tvizMaps[evId].dragging.disable();
+  const container = document.getElementById('leg-map-' + evId);
+  if (container && !container.querySelector('.tviz-map-interact')) {
+    const pill = document.createElement('div');
+    pill.className = 'tviz-map-interact';
+    pill.innerHTML = '<span>Click to interact</span>';
+    container.appendChild(pill);
+    pill.addEventListener('click', (e) => { e.stopPropagation(); _activateLegMap(evId); });
+  }
+  if (_activeLegMapId === evId) _activeLegMapId = null;
+}
+
+function _activateLegMap(evId) {
+  // Deactivate whichever map is currently active
+  if (_activeLegMapId && _activeLegMapId !== evId) _deactivateLegMap(_activeLegMapId);
+  const container = document.getElementById('leg-map-' + evId);
+  if (!container || !tvizMaps[evId]) return;
+  container.querySelector('.tviz-map-interact')?.remove();
+  tvizMaps[evId].scrollWheelZoom.enable();
+  tvizMaps[evId].dragging.enable();
+  _activeLegMapId = evId;
+}
+
+// Single document-level listener — deactivates active map on outside click
+document.addEventListener('click', (e) => {
+  if (!_activeLegMapId) return;
+  const container = document.getElementById('leg-map-' + _activeLegMapId);
+  if (container && !container.contains(e.target)) _deactivateLegMap(_activeLegMapId);
+});
+
+// Background prewarming: geocode + route all driving legs respecting rate limits
+async function warmLegMaps() {
+  const legs = events.filter(ev => ev.category === 'driving' && ev.departure && ev.arrival);
+  for (const ev of legs) {
+    if (!_geoCache[ev.departure]) {
+      try { _geoCache[ev.departure] = await geocode(ev.departure); } catch { _geoCache[ev.departure] = null; }
+      await new Promise(r => setTimeout(r, 1100));
+    }
+    if (!_geoCache[ev.arrival]) {
+      try { _geoCache[ev.arrival] = await geocode(ev.arrival); } catch { _geoCache[ev.arrival] = null; }
+      await new Promise(r => setTimeout(r, 1100));
+    }
+    const routeKey = ev.departure + '|' + ev.arrival;
+    if (!(routeKey in _routeCache)) {
+      const dep = _geoCache[ev.departure], arr = _geoCache[ev.arrival];
+      _routeCache[routeKey] = (dep && arr) ? await fetchLegRoute(dep, arr) : null;
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+}
 
 // ── BOOT ───────────────────────────────────────────────────────────────────────
 async function loadSharedView(id) {
@@ -1345,6 +1428,7 @@ async function loadSharedView(id) {
 
     renderSidebar();
     render();
+    warmLegMaps(); // pre-warm geocode+route cache in background
     openTripViz(tripId);
   } catch (err) {
     banner.textContent = '⚠ Shared link not found or no longer available.';
@@ -1387,6 +1471,7 @@ function init() {
   buildTimeSelect();
   renderSidebar();
   render();
+  warmLegMaps(); // pre-warm geocode+route cache in background
   window.addEventListener('resize', () => {
     if (!document.getElementById('form-overlay').classList.contains('closed')) positionOverlay();
   });
@@ -1879,6 +1964,9 @@ function openTripViz(tripId) {
         if (ev.departure && ev.arrival)
           evExtra += `<a href="${mapsDir(ev.departure, ev.arrival)}" target="_blank">🗺 View leg</a>`;
         evExtra += `</div>`;
+        if (ev.departure && ev.arrival && isStart) {
+          evExtra += `<div class="tviz-leg-map" id="leg-map-${ev.id}" data-dep="${ev.departure.replace(/"/g,'&quot;')}" data-arr="${ev.arrival.replace(/"/g,'&quot;')}" data-color="${trip.color}"><div class="tviz-leg-map-loading">Loading map…</div></div>`;
+        }
       }
 
       // ── Sleeping ──
@@ -1935,14 +2023,122 @@ function openTripViz(tripId) {
   document.getElementById('tviz-body').innerHTML = bodyHtml;
   document.getElementById('trip-viz-overlay').classList.add('open');
   document.getElementById('tviz-body').scrollTop = 0;
+  // Init leg maps after modal is visible (Leaflet needs container dimensions)
+  setTimeout(initAllLegMaps, 80);
 }
 
 function closeTripViz(e) {
   if (e && e.target !== document.getElementById('trip-viz-overlay')) return;
+  // Always close first, then clean up maps (so a map error can't block closing)
   document.getElementById('trip-viz-overlay').classList.remove('open');
+  for (const id of Object.keys(tvizMaps)) {
+    try { tvizMaps[id].remove(); } catch (_) {}
+    delete tvizMaps[id];
+  }
 }
 function printTripViz() {
   window.print();
+}
+
+async function fetchLegRoute(dep, arr) {
+  // dep/arr are {lat, lon} objects from geocode()
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${dep.lon},${dep.lat};${arr.lon},${arr.lat}?geometries=geojson&overview=full`;
+    const r = await fetch(url);
+    const d = await r.json();
+    if (d.code !== 'Ok' || !d.routes?.length) return null;
+    return d.routes[0].geometry; // GeoJSON LineString
+  } catch { return null; }
+}
+
+async function initLegMap(container, tripColor) {
+  if (typeof L === 'undefined') {
+    container.innerHTML = '<div class="tviz-leg-map-loading">Map library not loaded</div>';
+    return;
+  }
+  const evId = container.id.replace('leg-map-', '');
+  const dep  = container.dataset.dep;
+  const arr  = container.dataset.arr;
+
+  // Destroy old instance if re-opening
+  if (tvizMaps[evId]) { tvizMaps[evId].remove(); delete tvizMaps[evId]; }
+
+  // Resolve geocodes — use cache if already warmed, otherwise fetch now
+  if (!_geoCache[dep]) _geoCache[dep] = await geocode(dep).catch(() => null);
+  if (!_geoCache[arr]) _geoCache[arr] = await geocode(arr).catch(() => null);
+  const depGeo = _geoCache[dep], arrGeo = _geoCache[arr];
+  if (!depGeo || !arrGeo) {
+    container.innerHTML = '<div class="tviz-leg-map-loading">Map unavailable (could not locate address)</div>';
+    return;
+  }
+
+  // Resolve route — use cache if already warmed
+  const routeKey = dep + '|' + arr;
+  if (!(routeKey in _routeCache)) _routeCache[routeKey] = await fetchLegRoute(depGeo, arrGeo);
+  const route = _routeCache[routeKey];
+
+  // Clear loading indicator and init map (scroll/drag disabled until user clicks in)
+  container.innerHTML = '';
+  const map = L.map(container, {
+    zoomControl: true, attributionControl: false,
+    scrollWheelZoom: false, dragging: false,
+  });
+  tvizMaps[evId] = map;
+
+  // Bottom-right "Click to interact" pill — uses global activate/deactivate system
+  const interactOverlay = document.createElement('div');
+  interactOverlay.className = 'tviz-map-interact';
+  interactOverlay.innerHTML = '<span>Click to interact</span>';
+  container.appendChild(interactOverlay);
+  interactOverlay.addEventListener('click', (e) => { e.stopPropagation(); _activateLegMap(evId); });
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+
+  // Tell Leaflet the real container size (important inside scrollable modals)
+  map.invalidateSize();
+
+  const depLL = [depGeo.lat, depGeo.lon];
+  const arrLL = [arrGeo.lat, arrGeo.lon];
+
+  let bounds;
+  try {
+    if (route) {
+      // Wrap bare geometry in a Feature so L.geoJSON renders it reliably
+      const feature = { type: 'Feature', geometry: route, properties: {} };
+      const line = L.geoJSON(feature, { style: { color: tripColor, weight: 4, opacity: 0.85 } }).addTo(map);
+      bounds = line.getBounds();
+    }
+  } catch (_) { bounds = null; }
+
+  if (!bounds || !bounds.isValid()) {
+    // Fallback: straight dashed line between geocoded points
+    const line = L.polyline([depLL, arrLL], { color: tripColor, weight: 3, dashArray: '6,6' }).addTo(map);
+    bounds = line.getBounds();
+  }
+
+  L.circleMarker(depLL, { radius: 7, fillColor: '#16a34a', color: '#fff', weight: 2, fillOpacity: 1 })
+    .bindTooltip(dep, { permanent: false }).addTo(map);
+  L.circleMarker(arrLL, { radius: 7, fillColor: tripColor, color: '#fff', weight: 2, fillOpacity: 1 })
+    .bindTooltip(arr, { permanent: false }).addTo(map);
+
+  if (bounds && bounds.isValid()) {
+    map.fitBounds(bounds, { padding: [24, 24] });
+  } else {
+    map.setView(depLL, 8);
+  }
+}
+
+async function initAllLegMaps() {
+  const containers = document.querySelectorAll('.tviz-leg-map');
+  for (const c of containers) {
+    try {
+      await initLegMap(c, c.dataset.color);
+    } catch (err) {
+      c.innerHTML = '<div class="tviz-leg-map-loading">Map failed to load</div>';
+    }
+    // Small yield between maps so the UI stays responsive
+    await new Promise(r => setTimeout(r, 30));
+  }
 }
 
 // ── GITHUB SYNC ────────────────────────────────────────────────────────────────
