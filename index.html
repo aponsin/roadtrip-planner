@@ -740,8 +740,8 @@ body {
   position: absolute; top: 3px;
   font-size: 9px; color: #94a3b8;
   pointer-events: none; user-select: none;
-  text-align: center;
-  width: calc(100% / 7);
+  text-align: left;
+  white-space: nowrap;
 }
 .dnum.today { color: #3b82f6; font-weight: 700; }
 
@@ -885,12 +885,30 @@ body {
 .pop-del:hover { background: #fee2e2; }
 
 /* ── READ-ONLY MODE ─────────────────────────────── */
+/* Read-only shared view */
+#read-only-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 300;
+  background: #1e293b; color: #94a3b8;
+  text-align: center; font-size: 12px;
+  padding: 6px 16px; letter-spacing: .3px;
+  border-bottom: 1px solid #334155;
+}
+#read-only-banner strong { color: #f1f5f9; }
+#read-only-banner a { color: #7dd3fc; text-decoration: none; margin-left: 12px; }
+#read-only-banner a:hover { text-decoration: underline; }
+body.read-only .hdr { top: 31px; }
+body.read-only .shell { top: calc(var(--hdr) + 31px); }
+body.read-only #trip-viz-overlay { top: 31px; }
+#read-only-banner { z-index: 9000; }
 body.read-only .btn-new-event,
 body.read-only .btn-gh-sync,
 body.read-only .btn-new-trip,
 body.read-only .btn-import-trip,
-body.read-only .trip-acts,
 body.read-only .pop-btn { display: none !important; }
+/* In read-only mode, hide rename / delete / share buttons but keep viz + export */
+body.read-only .trip-act-btn.del,
+body.read-only .trip-act-btn.rename,
+body.read-only .trip-act-btn.share-btn { display: none !important; }
 
 /* ── SHARE MODAL ────────────────────────────────── */
 .gh-modal {
@@ -921,7 +939,7 @@ body.read-only .pop-btn { display: none !important; }
 </head>
 <body>
 
-<div id="read-only-banner" style="display:none;background:#1e3a5f;color:#fff;text-align:center;font-size:12px;padding:6px 16px;letter-spacing:.3px"></div>
+<div id="read-only-banner" style="display:none"></div>
 
 <!-- ── HEADER ─────────────────────────────────────────────── -->
 <header class="hdr">
@@ -1303,15 +1321,33 @@ async function loadSharedView(id) {
     }));
     nextEvId = events.length ? Math.max(...events.map(e => e.id)) + 1 : 1;
 
+    // Start calendar at the first event's date
+    if (events.length) {
+      const firstDay = events.reduce((a, b) => a.start < b.start ? a : b).start;
+      const firstMidnight = new Date(firstDay.getFullYear(), firstDay.getMonth(), firstDay.getDate());
+      if (isMobile()) {
+        // Centre first day in row 2 (not row 5 like today — trip start should be near top)
+        viewStart = new Date(firstMidnight.getTime() - 4 * DAY);
+      } else {
+        viewStart = monday(firstDay);
+      }
+    }
+
     readOnlyMode = true;
     document.body.classList.add('read-only');
 
-    banner.textContent = `Viewing shared trip: ${payload.trip.name} (read-only)`;
+    // Close sidebar by default in shared view
+    sbOpen = false;
+    document.getElementById('sb').classList.add('closed');
+
+    const tripId = payload.trip.id;
+    banner.innerHTML = `👁 Read-only shared trip &nbsp;·&nbsp; <strong>${esc(payload.trip.name)}</strong><a href="#" onclick="openTripViz(${tripId});return false">View Trip Summary →</a>`;
 
     renderSidebar();
     render();
+    openTripViz(tripId);
   } catch (err) {
-    banner.textContent = 'Shared link not found or expired.';
+    banner.textContent = '⚠ Shared link not found or no longer available.';
     renderSidebar();
     render();
   }
@@ -1613,9 +1649,9 @@ function renderSidebar() {
         ${nameHTML}
         <div class="trip-acts">
           <button class="trip-act-btn" onclick="openTripViz(${t.id})" title="Trip summary"><svg width="13" height="10" viewBox="0 0 13 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 5C1 5 3.2 1.5 6.5 1.5C9.8 1.5 12 5 12 5C12 5 9.8 8.5 6.5 8.5C3.2 8.5 1 5 1 5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="6.5" cy="5" r="1.6" fill="currentColor"/></svg></button>
-          <button class="trip-act-btn" onclick="ghShareTrip(${t.id})" title="Share trip"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="9.5" cy="2.5" r="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="9.5" cy="9.5" r="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="2.5" cy="6" r="1.5" stroke="currentColor" stroke-width="1.3"/><line x1="4" y1="6" x2="8" y2="3.2" stroke="currentColor" stroke-width="1.3"/><line x1="4" y1="6" x2="8" y2="8.8" stroke="currentColor" stroke-width="1.3"/></svg></button>
+          <button class="trip-act-btn share-btn" onclick="ghShareTrip(${t.id})" title="Share trip"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="9.5" cy="2.5" r="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="9.5" cy="9.5" r="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="2.5" cy="6" r="1.5" stroke="currentColor" stroke-width="1.3"/><line x1="4" y1="6" x2="8" y2="3.2" stroke="currentColor" stroke-width="1.3"/><line x1="4" y1="6" x2="8" y2="8.8" stroke="currentColor" stroke-width="1.3"/></svg></button>
           <button class="trip-act-btn" onclick="exportTrip(${t.id})" title="Export to CSV">⬇</button>
-          <button class="trip-act-btn" onclick="startRename(${t.id})" title="Rename">✏</button>
+          <button class="trip-act-btn rename" onclick="startRename(${t.id})" title="Rename">✏</button>
           <button class="trip-act-btn del" onclick="deleteTrip(${t.id})" title="Delete">✕</button>
         </div>
       </div>`;
@@ -2652,14 +2688,9 @@ function renderCalHeader() {
   if (!calDays) return;
   calDays.style.gridTemplateColumns = `repeat(${VD}, 1fr)`;
   if (isMobile()) {
-    let html = '';
-    for (let d = 0; d < VD; d++) {
-      const dd = addDays(viewStart, d);
-      const di = dd.getDay(); // 0=Sun
-      const name = DAY_NAMES[di === 0 ? 6 : di - 1];
-      html += `<div class="cal-day${isToday(dd) ? ' today-hdr' : ''}">${name} ${dd.getDate()}</div>`;
-    }
-    calDays.innerHTML = html;
+    // On mobile each row has different days, so the header can't show specific dates.
+    // Day names are shown inside each row via .dnum instead.
+    calDays.innerHTML = Array(VD).fill('<div class="cal-day"></div>').join('');
   } else {
     calDays.innerHTML = DAY_NAMES.map(n => `<div class="cal-day">${n}</div>`).join('');
   }
@@ -2721,7 +2752,9 @@ function renderCal() {
       const wkd   = d >= 5 ? ' weekend' : '';
       const iso = dd.toISOString().slice(0,10);
       dcols += `<div class="dcol${wkd}" style="left:${L}%;width:${W}%"></div>`;
-      dnums += `<div class="dnum${today?' today':''}" style="left:calc(${L}% + 3px)">${dd.getDate()}</div>`;
+      const di = dd.getDay();
+      const dayAbbr = isMobile() ? DAY_NAMES[di === 0 ? 6 : di - 1].slice(0,2) + ' ' : '';
+      dnums += `<div class="dnum${today?' today':''}" style="left:calc(${L}% + 3px)">${dayAbbr}${dd.getDate()}</div>`;
       // Night zones: midnight→7am and 9pm→midnight
       const mL = (d / VD * 100).toFixed(3);
       const mW = (NIGHT_END / 24 / VD * 100).toFixed(3);
