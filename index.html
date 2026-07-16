@@ -501,6 +501,49 @@ body {
   transition: all .15s;
 }
 .tviz-print-btn:hover { background: #e2e8f0; color: #0f172a; }
+@media (max-width: 680px) {
+  :root { --lbl-w: 56px; }
+
+  /* Hide title text, keep logo */
+  .hdr-title { display: none; }
+  .hdr-logo  { display: none; }
+  .period-lbl { font-size: 11px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Sync button: icon only */
+  .btn-gh-sync { padding: 5px 8px; }
+  .btn-gh-sync .sync-label { display: none; }
+
+  /* Bigger nav arrows */
+  .period-nav .hdr-icon-btn { font-size: 22px; padding: 4px 10px; }
+
+  /* New event button: compact */
+  .btn-new-event { padding: 6px 10px; font-size: 12px; }
+
+  /* Form: full-screen bottom sheet */
+  .form-overlay { padding-top: 0 !important; align-items: flex-end !important; }
+  .form-panel   {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 16px 16px 0 0 !important;
+    max-height: 92vh !important;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+
+  /* Today highlight in header */
+  .cal-day.today-hdr { color: var(--accent); background: #eff6ff; border-radius: 4px; }
+
+  /* Week label: narrower */
+  .week-lbl { padding: 4px 4px; font-size: 9px; }
+  .week-num { display: none; }
+
+  /* Calendar card: tighter margins */
+  .cal-card { margin: 6px 6px 24px; }
+
+  /* Popover: full width on mobile */
+  #pop { width: min(320px, calc(100vw - 24px)) !important; }
+}
+
 @media print {
   body > *:not(#trip-viz-overlay) { display: none !important; }
   #trip-viz-overlay {
@@ -784,7 +827,7 @@ body {
       <path d="M11.5 4.5C11.5 2.567 9.933 1 8 1C6.42 1 5.083 2.03 4.65 3.45C3.17 3.7 2 4.97 2 6.5C2 8.157 3.343 9.5 5 9.5H11C12.105 9.5 13 8.605 13 7.5C13 6.5 12.28 5.67 11.33 5.52C11.44 5.19 11.5 4.85 11.5 4.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
       <path d="M7 9.5V12M7 12L5.5 10.5M7 12L8.5 10.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
-    Sync
+    <span class="sync-label">Sync</span>
   </button>
   <button class="btn-new-event" onclick="openForm()">＋ New Event</button>
 </header>
@@ -1042,6 +1085,9 @@ const TRIP_COLORS = [
 
 const WK  = 7 * 24 * 60 * 60 * 1000;
 const DAY = 24 * 60 * 60 * 1000;
+function isMobile()    { return window.innerWidth <= 680; }
+function getViewDays() { return isMobile() ? 3 : 7; }
+function getViewMs()   { return getViewDays() * DAY; }
 const LANE_H    = 48;
 const LANE_GAP  = 6;
 const DATE_ROW  = 22;
@@ -1069,6 +1115,12 @@ let routeData    = null; // { distanceM, drivingSeconds } after a successful fet
 // ── BOOT ───────────────────────────────────────────────────────────────────────
 function init() {
   loadState();
+  if (isMobile()) {
+    const today = new Date();
+    viewStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    sbOpen = false;
+    document.getElementById('sb').classList.add('closed');
+  }
   // Accept ?token=ghp_... in the URL — saves it to localStorage then strips it
   // from the address bar so it doesn't sit in browser history.
   const urlParams = new URLSearchParams(window.location.search);
@@ -1131,6 +1183,7 @@ function init() {
   document.addEventListener('click', onDocClick);
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('wheel', hideBarHover, { passive: true });
+  window.addEventListener('resize', () => { renderCalHeader(); renderCal(); });
 }
 
 // ── PERSISTENCE ────────────────────────────────────────────────────────────────
@@ -1274,13 +1327,21 @@ function isToday(d) {
 
 // ── NAVIGATION ─────────────────────────────────────────────────────────────────
 function navigate(weeks) {
-  // Anchor at noon before adding weeks so DST transitions can't drift viewStart
-  // off midnight, then re-snap to Monday midnight via monday().
+  const VM = getViewMs();
   const noon = new Date(viewStart.getFullYear(), viewStart.getMonth(), viewStart.getDate(), 12, 0, 0, 0);
-  viewStart = monday(new Date(noon.getTime() + weeks * WK));
+  const newDate = new Date(noon.getTime() + weeks * VM);
+  viewStart = isMobile()
+    ? new Date(newDate.getFullYear(), newDate.getMonth(), newDate.getDate())
+    : monday(newDate);
   render();
 }
-function goToDate(s) { if (s) { viewStart = monday(new Date(s + 'T00:00:00')); render(); } }
+function goToDate(s) {
+  if (s) {
+    const d = new Date(s + 'T00:00:00');
+    viewStart = isMobile() ? d : monday(d);
+    render();
+  }
+}
 
 // ── SIDEBAR ─────────────────────────────────────────────────────────────────────
 function toggleSidebar() {
@@ -2033,17 +2094,18 @@ function evVisible(ev) {
 // ── SEGMENTS ──────────────────────────────────────────────────────────────────
 function segments(ev) {
   const segs = [];
+  const VM = getViewMs();
   for (let w = 0; w < 10; w++) {
-    const wsRaw = new Date(viewStart.getTime() + w * WK);
+    const wsRaw = new Date(viewStart.getTime() + w * VM);
     const ws = new Date(wsRaw.getFullYear(), wsRaw.getMonth(), wsRaw.getDate());
-    const we = new Date(ws.getTime() + WK);
+    const we = new Date(ws.getTime() + VM);
     if (ev.start >= we || ev.end <= ws) continue;
     const ss = Math.max(ev.start.getTime(), ws.getTime());
     const se = Math.min(ev.end.getTime(),   we.getTime());
     segs.push({
       w,
-      left:    (ss - ws.getTime()) / WK * 100,
-      width:   (se - ss)           / WK * 100,
+      left:    (ss - ws.getTime()) / VM * 100,
+      width:   (se - ss)           / VM * 100,
       isStart: ev.start.getTime() >= ws.getTime(),
       isEnd:   ev.end.getTime()   <= we.getTime(),
     });
@@ -2060,8 +2122,9 @@ function hexToRgba(hex, alpha) {
 }
 
 function weekLanes(weekIdx) {
-  const ws = new Date(viewStart.getTime() + weekIdx * WK);
-  const we = new Date(ws.getTime() + WK);
+  const VM = getViewMs();
+  const ws = new Date(viewStart.getTime() + weekIdx * VM);
+  const we = new Date(ws.getTime() + VM);
 
   // Global trip spans: start = midnight of first event's day, end = midnight after last event's day
   const tripSpan = new Map();
@@ -2118,8 +2181,8 @@ function weekLanes(weekIdx) {
     // Band: clamp trip span to this week, expressed as % of week width
     const clampedStart  = Math.max(ws.getTime(), span.start.getTime());
     const clampedEnd    = Math.min(we.getTime(), span.end.getTime());
-    const bandLeft      = (clampedStart - ws.getTime()) / WK * 100;
-    const bandRight     = (clampedEnd   - ws.getTime()) / WK * 100;
+    const bandLeft      = (clampedStart - ws.getTime()) / VM * 100;
+    const bandRight     = (clampedEnd   - ws.getTime()) / VM * 100;
     // Show border only at the true start/end of the trip (not at week boundaries)
     const showBorderL = clampedStart === span.start.getTime();
     const showBorderR = clampedEnd   === span.end.getTime();
@@ -2133,14 +2196,35 @@ function weekLanes(weekIdx) {
 }
 
 // ── RENDER ─────────────────────────────────────────────────────────────────────
+const DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+function renderCalHeader() {
+  const VD = getViewDays();
+  const calDays = document.querySelector('.cal-days');
+  if (!calDays) return;
+  calDays.style.gridTemplateColumns = `repeat(${VD}, 1fr)`;
+  if (isMobile()) {
+    let html = '';
+    for (let d = 0; d < VD; d++) {
+      const dd = addDays(viewStart, d);
+      const di = dd.getDay(); // 0=Sun
+      const name = DAY_NAMES[di === 0 ? 6 : di - 1];
+      html += `<div class="cal-day${isToday(dd) ? ' today-hdr' : ''}">${name} ${dd.getDate()}</div>`;
+    }
+    calDays.innerHTML = html;
+  } else {
+    calDays.innerHTML = DAY_NAMES.map(n => `<div class="cal-day">${n}</div>`).join('');
+  }
+}
+
 function render() {
   updatePeriodLabel();
+  renderCalHeader();
   renderCal();
   save();
 }
 
 function updatePeriodLabel() {
-  const end = addDays(viewStart, 69);
+  const end = addDays(viewStart, getViewDays() * 10 - 1);
   document.getElementById('period-lbl').textContent =
     `${fmt(viewStart)} – ${fmt(end)}, ${end.getFullYear()}`;
   const p = n => String(n).padStart(2,'0');
@@ -2149,15 +2233,17 @@ function updatePeriodLabel() {
 }
 
 function renderCal() {
+  const VM = getViewMs();
+  const VD = getViewDays();
   const body = document.getElementById('cal-body');
   const now  = new Date();
   let html   = '';
 
   for (let w = 0; w < 10; w++) {
     // Snap ws to local midnight to prevent DST drift from shifting date numbers
-    const wsRaw = new Date(viewStart.getTime() + w * WK);
+    const wsRaw = new Date(viewStart.getTime() + w * VM);
     const ws = new Date(wsRaw.getFullYear(), wsRaw.getMonth(), wsRaw.getDate());
-    const we = new Date(ws.getTime() + WK);
+    const we = new Date(ws.getTime() + VM);
     const { segs, laneCount, tripBands } = weekLanes(w);
     const rowH = DATE_ROW + LANE_TOP + laneCount * (LANE_H + LANE_GAP) + ROW_PAD;
 
@@ -2178,29 +2264,29 @@ function renderCal() {
     // Day columns + date numbers
     let dcols = '', dnums = '', noons = '', nights = '';
     const NIGHT_START = 21, NIGHT_END = 7; // 9pm → 7am
-    for (let d = 0; d < 7; d++) {
+    for (let d = 0; d < VD; d++) {
       const dd    = addDays(ws, d);
-      const L     = (d / 7 * 100).toFixed(3);
-      const W     = (100 / 7).toFixed(3);
+      const L     = (d / VD * 100).toFixed(3);
+      const W     = (100 / VD).toFixed(3);
       const today = isToday(dd);
       const wkd   = d >= 5 ? ' weekend' : '';
       const iso = dd.toISOString().slice(0,10);
       dcols += `<div class="dcol${wkd}" style="left:${L}%;width:${W}%"></div>`;
       dnums += `<div class="dnum${today?' today':''}" style="left:calc(${L}% + 3px)">${dd.getDate()}</div>`;
       // Night zones: midnight→7am and 9pm→midnight
-      const mL = (d / 7 * 100).toFixed(3);
-      const mW = (NIGHT_END / 24 / 7 * 100).toFixed(3);
-      const eL = ((d + NIGHT_START / 24) / 7 * 100).toFixed(3);
-      const eW = ((24 - NIGHT_START) / 24 / 7 * 100).toFixed(3);
+      const mL = (d / VD * 100).toFixed(3);
+      const mW = (NIGHT_END / 24 / VD * 100).toFixed(3);
+      const eL = ((d + NIGHT_START / 24) / VD * 100).toFixed(3);
+      const eW = ((24 - NIGHT_START) / 24 / VD * 100).toFixed(3);
       nights += `<div class="night" style="left:${mL}%;width:${mW}%"></div>`;
       nights += `<div class="night" style="left:${eL}%;width:${eW}%"></div>`;
       // Now line (current time, today only)
       if (today) {
-        const nowL = ((now - ws) / WK * 100).toFixed(3);
+        const nowL = ((now - ws) / VM * 100).toFixed(3);
         noons += `<div class="now-line" style="left:${nowL}%"></div>`;
       }
       // Noon line at midpoint of each day column
-      const noonL = ((d + 0.5) / 7 * 100).toFixed(3);
+      const noonL = ((d + 0.5) / VD * 100).toFixed(3);
       noons += `<div class="noon-line" style="left:${noonL}%"></div>`;
     }
 
@@ -2217,19 +2303,19 @@ function renderCal() {
 
       bars += `<div class="ev-bar${drag}${linkCls}" data-id="${ev.id}"
         style="left:calc(${left.toFixed(3)}% + 2px);width:calc(${width.toFixed(3)}% - 4px);top:${top}px;height:${LANE_H}px;background:${cat.bg};border:1.5px ${ev.tripId == null ? 'dashed' : 'solid'} ${cat.border};color:${cat.color};border-radius:${tl} ${tr} ${tr} ${tl}"
-        onmousedown="barDown(event,${ev.id})"
+        onmousedown="barDown(event,${ev.id})" ontouchend="barTap(event,${ev.id})"
         ondblclick="closePop();openForm(events.find(e=>e.id===${ev.id}))"
         onmouseenter="showBarHover(event,${ev.id})"
         onmouseleave="hideBarHover()"
       ><div class="ev-top"><span class="ev-icon">${cat.emoji}</span><span class="ev-dur">${fmtDur(ev.end-ev.start)}</span></div><div class="ev-bot">${isStart?'':'<span class="ev-cl">◀</span>'}<span class="ev-lbl">${esc(ev.title)}</span>${isEnd?'':'<span class="ev-cr">▶</span>'}</div></div>`;
     }
 
-    const we_ = addDays(ws, 6);
+    const we_ = addDays(ws, VD - 1);
     html += `
       <div class="week-row" data-w="${w}" style="height:${rowH}px">
         <div class="week-lbl">
-          <span class="week-num">Week ${w+1}</span>
-          <span class="week-dates">${fmt(ws)}<br>${fmt(we_)}</span>
+          <span class="week-num">${isMobile() ? '' : 'Week ' + (w+1)}</span>
+          <span class="week-dates">${fmt(ws)}<br>${isMobile() ? fmt(we_) : fmt(we_)}</span>
         </div>
         <div class="timeline" data-w="${w}" ondblclick="timelineDblClick(event,${w})">${dcols}${bands}${nights}${noons}${dnums}${bars}</div>
       </div>`;
@@ -2270,6 +2356,13 @@ function timelineDblClick(e, weekIdx) {
 
 function positionOverlay() {
   const overlay = document.getElementById('form-overlay');
+  if (isMobile()) {
+    overlay.style.top    = '0';
+    overlay.style.left   = '0';
+    overlay.style.width  = '100%';
+    overlay.style.height = '100%';
+    return;
+  }
   const r = document.getElementById('cal-area').getBoundingClientRect();
   const top    = Math.max(0, r.top);
   const left   = Math.max(0, r.left);
@@ -3076,6 +3169,15 @@ function barDown(e, evId) {
   };
   document.addEventListener('mousemove', dragMove);
   document.addEventListener('mouseup',   dragUp);
+}
+
+function barTap(e, evId) {
+  e.preventDefault();
+  e.stopPropagation();
+  const ev = events.find(item => item.id === evId);
+  if (!ev) return;
+  const touch = e.changedTouches[0];
+  showPop({ clientX: touch.clientX, clientY: touch.clientY }, ev);
 }
 
 function dragMove(e) {
