@@ -601,6 +601,15 @@ body {
 
   /* Popover: full width on mobile */
   #pop { width: min(320px, calc(100vw - 24px)) !important; }
+
+  /* Sticky form nav buttons on mobile */
+  .form-head-row {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--surface, #fff);
+    border-bottom: 1px solid var(--border, #e2e8f0);
+    margin: -16px -20px 10px;
+    padding: 10px 20px;
+  }
 }
 
 @media print {
@@ -779,6 +788,15 @@ body {
 }
 
 /* ── POPOVER ─────────────────────────────── */
+.pop-nav-btn {
+  width: 28px; height: 28px; flex-shrink: 0;
+  background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px;
+  font-size: 17px; color: #475569; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s;
+}
+.pop-nav-btn:hover:not(:disabled) { background: #e2e8f0; color: #0f172a; }
+.pop-nav-btn:disabled { opacity: .3; cursor: default; }
 .pop {
   position: fixed;
   background: #fff; border: 1.5px solid var(--border);
@@ -1117,8 +1135,10 @@ body {
   <div class="pop-desc"  id="pop-desc"></div>
   <div class="pop-driving" id="pop-driving" style="display:none"></div>
   <div class="pop-actions">
+    <button class="pop-nav-btn" id="pop-nav-prev" onclick="popNavStep(-1)" title="Previous event">‹</button>
     <button class="pop-btn" onclick="editFromPop()">Edit</button>
     <button class="pop-btn pop-del" onclick="deleteFromPop()">Delete</button>
+    <button class="pop-nav-btn" id="pop-nav-next" onclick="popNavStep(1)"  title="Next event">›</button>
   </div>
 </div>
 
@@ -3363,14 +3383,56 @@ function showPop(e, ev) {
 
   const pop = document.getElementById('pop');
   pop.style.display = 'block';
+  updatePopNav();
+
+  // Position: avoid clipping at viewport edges
   const vw = window.innerWidth, vh = window.innerHeight;
-  pop.style.left = Math.min(e.clientX + 12, vw - 296) + 'px';
-  pop.style.top  = Math.min(e.clientY + 12, vh - 220) + 'px';
+  const pw = pop.offsetWidth  || 290;
+  const ph = pop.offsetHeight || 260;
+  const GAP = 12;
+
+  let left = e.clientX + GAP;
+  if (left + pw > vw - 8) left = e.clientX - pw - GAP;
+  left = Math.max(8, left);
+
+  let top;
+  if (e.clientY > vh * 0.5) {
+    // Click in bottom half → show above
+    top = e.clientY - ph - GAP;
+  } else {
+    top = e.clientY + GAP;
+  }
+  top = Math.max(8, Math.min(top, vh - ph - 8));
+
+  pop.style.left = left + 'px';
+  pop.style.top  = top  + 'px';
 }
 
 function closePop() {
   document.getElementById('pop').style.display = 'none';
   popEvId = null;
+}
+
+function updatePopNav() {
+  const prev = document.getElementById('pop-nav-prev');
+  const next = document.getElementById('pop-nav-next');
+  if (!prev || !next) return;
+  if (!popEvId) { prev.disabled = true; next.disabled = true; return; }
+  const sorted = formNavSortedEvents();
+  const idx = sorted.findIndex(e => e.id === popEvId);
+  prev.disabled = idx <= 0;
+  next.disabled = idx < 0 || idx >= sorted.length - 1;
+}
+
+function popNavStep(dir) {
+  if (!popEvId) return;
+  const sorted = formNavSortedEvents();
+  const idx = sorted.findIndex(e => e.id === popEvId);
+  const target = sorted[idx + dir];
+  if (!target) return;
+  // Simulate a center-of-screen click so positioning is sensible
+  const fakeEvt = { clientX: window.innerWidth / 2, clientY: window.innerHeight / 2 };
+  showPop(fakeEvt, target);
 }
 
 function editFromPop() {
