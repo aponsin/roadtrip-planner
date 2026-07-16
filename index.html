@@ -162,6 +162,44 @@ body {
 .gh-hint code {
   background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-size: 11px;
 }
+/* ── GH LOAD WARNING + SLIDER ──────────── */
+#gh-load-warn { margin-top: 12px; }
+.gh-warn-banner {
+  display: flex; gap: 14px; align-items: flex-start;
+  background: #fef2f2; border: 1.5px solid #fca5a5;
+  border-radius: 10px; padding: 14px 16px; margin-bottom: 14px;
+}
+.gh-warn-icon { font-size: 26px; line-height: 1; flex-shrink: 0; }
+.gh-warn-msg strong { display: block; color: #991b1b; font-size: 14px; margin-bottom: 5px; }
+.gh-warn-msg p { color: #7f1d1d; font-size: 12px; margin: 0; line-height: 1.55; }
+.gh-slide-track {
+  position: relative; height: 54px;
+  background: #f1f5f9; border: 1.5px solid #e2e8f0;
+  border-radius: 27px; overflow: hidden;
+  user-select: none; margin-bottom: 10px; cursor: pointer;
+}
+.gh-slide-fill {
+  position: absolute; left: 0; top: 0; height: 100%;
+  background: linear-gradient(90deg, #fee2e2, #fca5a5);
+  width: 54px; border-radius: 27px; pointer-events: none;
+}
+.gh-slide-label {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; color: #94a3b8;
+  pointer-events: none; user-select: none; letter-spacing: .2px;
+}
+.gh-slide-thumb {
+  position: absolute; left: 5px; top: 5px;
+  width: 44px; height: 44px; z-index: 2;
+  background: #dc2626; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 19px; color: #fff; cursor: grab;
+  box-shadow: 0 2px 8px rgba(220,38,38,.35);
+  transition: background .25s;
+}
+.gh-slide-thumb:active { cursor: grabbing; }
+.gh-slide-thumb.done   { background: #16a34a; box-shadow: 0 2px 8px rgba(22,163,74,.35); }
 /* ── DAY CONTEXT MENU ───────────────────── */
 #day-ctx-menu {
   background: #fff;
@@ -504,20 +542,27 @@ body {
 @media (max-width: 680px) {
   :root { --lbl-w: 56px; }
 
-  /* Hide title text, keep logo */
+  /* Two-row header on mobile */
+  :root { --hdr: 92px; }
+  .hdr { flex-wrap: wrap; align-content: center; height: var(--hdr); padding: 0 10px; gap: 6px 8px; }
+
+  /* Hide title & logo to save space */
   .hdr-title { display: none; }
   .hdr-logo  { display: none; }
-  .period-lbl { font-size: 11px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .period-lbl { font-size: 11px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  /* Sync button: icon only */
-  .btn-gh-sync { padding: 5px 8px; }
-  .btn-gh-sync .sync-label { display: none; }
+  /* Spacer becomes a full-width invisible divider → forces row break */
+  .hdr-spacer { width: 100%; height: 0; flex: none; margin: 0; }
+
+  /* Row 2: sync + new event pushed to the right */
+  .btn-gh-sync { padding: 5px 10px; margin-left: auto; }
+  .btn-gh-sync .sync-label { display: inline; font-size: 12px; }
 
   /* Bigger nav arrows */
   .period-nav .hdr-icon-btn { font-size: 22px; padding: 4px 10px; }
 
-  /* New event button: compact */
-  .btn-new-event { padding: 6px 10px; font-size: 12px; }
+  /* New event button: full text, nicely sized */
+  .btn-new-event { padding: 6px 12px; font-size: 13px; }
 
   /* Form: full-screen bottom sheet */
   .form-overlay { padding-top: 0 !important; align-items: flex-end !important; }
@@ -852,13 +897,33 @@ body {
       <label for="gh-repo">Repository (owner/repo)</label>
       <input type="text" id="gh-repo" placeholder="aponsin/roadtrip-planner" spellcheck="false">
     </div>
+    <div class="gh-field">
+      <label for="gh-device-label">Device label <span style="font-weight:400;color:#94a3b8">(appears in history filenames)</span></label>
+      <input type="text" id="gh-device-label" placeholder="e.g. Alex-iPhone" spellcheck="false" maxlength="32">
+    </div>
     <p class="gh-hint">
-      Trip data is stored as CSV files in a <code>/data/</code> folder in your repo. Your token is saved only in this browser's localStorage — never sent anywhere except GitHub.<br>
+      Trip data is stored as CSV files in a <code>/data/</code> folder in your repo. Older versions are automatically archived to <code>/data/history/</code> before each save. Your token is saved only in this browser's localStorage — never sent anywhere except GitHub.<br>
       <a href="https://github.com/settings/tokens/new?scopes=repo&description=Road+Trip+Planner" target="_blank">Create a token with <code>repo</code> scope →</a>
     </p>
-    <div class="gh-actions">
+    <div class="gh-actions" id="gh-actions">
       <button class="gh-btn save" onclick="ghSave()">⬆ Save to GitHub</button>
       <button class="gh-btn load" onclick="ghLoad()">⬇ Load from GitHub</button>
+    </div>
+    <!-- Load-override warning (shown only when local trips exist) -->
+    <div id="gh-load-warn" style="display:none">
+      <div class="gh-warn-banner">
+        <div class="gh-warn-icon">⚠️</div>
+        <div class="gh-warn-msg">
+          <strong>This will override existing trips</strong>
+          <p id="gh-warn-text"></p>
+        </div>
+      </div>
+      <div class="gh-slide-track" id="gh-slide-track">
+        <div class="gh-slide-fill"  id="gh-slide-fill"></div>
+        <div class="gh-slide-label" id="gh-slide-label">Slide to confirm →</div>
+        <div class="gh-slide-thumb" id="gh-slide-thumb">⬇</div>
+      </div>
+      <button class="gh-btn" style="background:#f1f5f9;color:#475569;border:1px solid #e2e8f0" onclick="cancelGhLoad()">✕ Cancel</button>
     </div>
     <div class="gh-log" id="gh-log"></div>
   </div>
@@ -1184,6 +1249,7 @@ function init() {
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('wheel', hideBarHover, { passive: true });
   window.addEventListener('resize', () => { renderCalHeader(); renderCal(); });
+  initGhSlider();
 }
 
 // ── PERSISTENCE ────────────────────────────────────────────────────────────────
@@ -1701,8 +1767,35 @@ function ghConfig() {
 }
 function ghSaveConfig(cfg) { localStorage.setItem(GH_CONFIG_KEY, JSON.stringify(cfg)); }
 
+// Stable per-browser device ID (8-char hex), stored in localStorage
+function ghDeviceId() {
+  const KEY = 'rtp4_device_id';
+  let id = localStorage.getItem(KEY);
+  if (!id) {
+    id = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+      .map(b => b.toString(16).padStart(2,'0')).join('');
+    localStorage.setItem(KEY, id);
+  }
+  return id;
+}
+
+// Sanitize a string for use in filenames
+function ghSanitize(s) {
+  return s.replace(/[^\w\s\-]/g,'').trim().replace(/\s+/g,'_') || 'device';
+}
+
 function ghTripFilename(trip) {
   return (trip.name.replace(/[^\w\s\-]/g,'').trim().replace(/\s+/g,'_') || 'trip') + '.csv';
+}
+
+// Build history archive filename: {trip}_{YYYY-MM-DDTHH-MM}_{device}.csv
+function ghHistoryFilename(trip, deviceLabel) {
+  const base   = trip.name.replace(/[^\w\s\-]/g,'').trim().replace(/\s+/g,'_') || 'trip';
+  const device = ghSanitize(deviceLabel || ghDeviceId());
+  const now    = new Date();
+  const pad    = n => String(n).padStart(2,'0');
+  const ts     = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}-${pad(now.getMinutes())}`;
+  return `${base}_${ts}_${device}.csv`;
 }
 
 // Build CSV string for a trip (same format as exportTrip but returns string)
@@ -1756,8 +1849,9 @@ async function ghApi(method, path, body, token, owner, repo) {
 
 function openGHModal() {
   const cfg = ghConfig();
-  document.getElementById('gh-token').value = cfg.token || '';
-  document.getElementById('gh-repo').value  = cfg.repo  || 'aponsin/roadtrip-planner';
+  document.getElementById('gh-token').value        = cfg.token  || '';
+  document.getElementById('gh-repo').value         = cfg.repo   || 'aponsin/roadtrip-planner';
+  document.getElementById('gh-device-label').value = cfg.device || ghDeviceId();
   document.getElementById('gh-log').innerHTML = '';
   document.getElementById('gh-modal').classList.add('open');
 }
@@ -1775,30 +1869,59 @@ function ghLog(msg, type = 'info') {
 }
 
 async function ghSave() {
-  const token   = document.getElementById('gh-token').value.trim();
-  const repoStr = document.getElementById('gh-repo').value.trim();
+  const token       = document.getElementById('gh-token').value.trim();
+  const repoStr     = document.getElementById('gh-repo').value.trim();
+  const deviceLabel = document.getElementById('gh-device-label').value.trim() || ghDeviceId();
   if (!token)               { ghLog('⚠ Please enter a GitHub token.', 'warn'); return; }
   if (!repoStr.includes('/')) { ghLog('⚠ Repo must be "owner/repo".', 'warn'); return; }
   const [owner, repo] = repoStr.split('/');
-  ghSaveConfig({ token, repo: repoStr });
+  ghSaveConfig({ token, repo: repoStr, device: deviceLabel });
 
   const tripsToSave = trips.filter(t => events.some(e => e.tripId === t.id));
   if (!tripsToSave.length) { ghLog('⚠ No trips with events to save.', 'warn'); return; }
 
-  ghLog(`Saving ${tripsToSave.length} trip(s) to ${repoStr}/data/ …`);
-  let saved = 0, failed = 0;
+  ghLog(`Saving ${tripsToSave.length} trip(s) to ${repoStr}/data/ … [${deviceLabel}]`);
+  let saved = 0, skipped = 0, failed = 0;
 
   for (const trip of tripsToSave) {
     const filename = ghTripFilename(trip);
-    const csv = ghBuildCSV(trip.id);
-    if (!csv) continue;
+    const newCsv   = ghBuildCSV(trip.id);
+    if (!newCsv) continue;
     try {
       const existing = await ghApi('GET', `data/${filename}`, null, token, owner, repo);
-      await ghApi('PUT', `data/${filename}`, {
-        message: `Update trip: ${trip.name}`,
-        content: ghEncode(csv),
-        ...(existing?.sha ? { sha: existing.sha } : {}),
-      }, token, owner, repo);
+
+      if (existing) {
+        // Decode remote content to compare
+        const oldCsv = ghDecode(existing.content);
+        if (oldCsv === newCsv) {
+          ghLog(`→ "${trip.name}" unchanged, skipped`, 'info');
+          skipped++;
+          continue;
+        }
+        // Archive the old version before overwriting
+        const histName = ghHistoryFilename(trip, deviceLabel);
+        try {
+          await ghApi('PUT', `data/history/${histName}`, {
+            message: `Archive: ${trip.name} (${deviceLabel})`,
+            content: existing.content.replace(/\n/g,''),
+          }, token, owner, repo);
+          ghLog(`  ↳ archived previous version as ${histName}`, 'info');
+        } catch(archErr) {
+          ghLog(`  ⚠ Archive failed: ${archErr.message}`, 'warn');
+        }
+        // Update current file
+        await ghApi('PUT', `data/${filename}`, {
+          message: `Update trip: ${trip.name} [${deviceLabel}]`,
+          content: ghEncode(newCsv),
+          sha: existing.sha,
+        }, token, owner, repo);
+      } else {
+        // New trip — create from scratch
+        await ghApi('PUT', `data/${filename}`, {
+          message: `Create trip: ${trip.name} [${deviceLabel}]`,
+          content: ghEncode(newCsv),
+        }, token, owner, repo);
+      }
       ghLog(`✓ Saved "${trip.name}"`, 'ok');
       saved++;
     } catch(err) {
@@ -1806,7 +1929,105 @@ async function ghSave() {
       failed++;
     }
   }
-  ghLog(`Done — ${saved} saved${failed ? `, ${failed} failed` : ''}.`, saved > 0 ? 'ok' : 'warn');
+  const parts = [];
+  if (saved)   parts.push(`${saved} saved`);
+  if (skipped) parts.push(`${skipped} unchanged`);
+  if (failed)  parts.push(`${failed} failed`);
+  ghLog(`Done — ${parts.join(', ')}.`, saved > 0 ? 'ok' : skipped > 0 ? 'info' : 'warn');
+}
+
+// ── GH LOAD WARNING / SLIDER ───────────────────────────────────────────────────
+let ghSlideState = null;
+let ghPendingLoad = null;
+
+function showGhLoadWarning(token, owner, repo) {
+  ghPendingLoad = { token, owner, repo };
+  const n = trips.length;
+  document.getElementById('gh-warn-text').textContent =
+    `You have ${n} trip${n !== 1 ? 's' : ''} saved locally. Loading from GitHub will replace any matching trips and add new ones. This cannot be undone.`;
+  document.getElementById('gh-load-warn').style.display = '';
+  document.getElementById('gh-actions').style.display   = 'none';
+  document.getElementById('gh-log').innerHTML = '';
+  resetGhSlider();
+}
+
+function cancelGhLoad() {
+  ghPendingLoad = null;
+  document.getElementById('gh-load-warn').style.display = 'none';
+  document.getElementById('gh-actions').style.display   = '';
+}
+
+function resetGhSlider() {
+  const thumb = document.getElementById('gh-slide-thumb');
+  const fill  = document.getElementById('gh-slide-fill');
+  const label = document.getElementById('gh-slide-label');
+  if (!thumb) return;
+  thumb.style.transition = '';
+  thumb.style.left = '5px';
+  thumb.classList.remove('done');
+  thumb.textContent = '⬇';
+  if (fill)  { fill.style.transition = ''; fill.style.width = '54px'; }
+  if (label) label.textContent = 'Slide to confirm →';
+}
+
+function initGhSlider() {
+  const track = document.getElementById('gh-slide-track');
+  const thumb = document.getElementById('gh-slide-thumb');
+  if (!track || !thumb) return;
+
+  const start = clientX => {
+    const rect = track.getBoundingClientRect();
+    ghSlideState = { startX: clientX, trackW: rect.width, thumbStart: parseInt(thumb.style.left || '5') };
+  };
+  const move = clientX => {
+    if (!ghSlideState) return;
+    const fill  = document.getElementById('gh-slide-fill');
+    const label = document.getElementById('gh-slide-label');
+    const maxL  = ghSlideState.trackW - 49;
+    const newL  = Math.max(5, Math.min(maxL, ghSlideState.thumbStart + clientX - ghSlideState.startX));
+    thumb.style.left = newL + 'px';
+    if (fill)  fill.style.width = (newL + 44) + 'px';
+    if (label) label.style.opacity = Math.max(0, 1 - newL / (maxL * 0.6));
+  };
+  const end = () => {
+    if (!ghSlideState) return;
+    const maxL = ghSlideState.trackW - 49;
+    const curL = parseInt(thumb.style.left || '5');
+    ghSlideState = null;
+    if (curL >= maxL - 4) {
+      // Confirmed — snap to end, turn green, then fire
+      thumb.style.left = maxL + 'px';
+      thumb.classList.add('done');
+      thumb.textContent = '✓';
+      const label = document.getElementById('gh-slide-label');
+      if (label) { label.textContent = 'Loading…'; label.style.opacity = 1; }
+      setTimeout(() => {
+        const pending = ghPendingLoad;
+        cancelGhLoad();
+        if (pending) executeGhLoad(pending.token, pending.owner, pending.repo);
+      }, 350);
+    } else {
+      // Snap back with spring animation
+      thumb.style.transition = 'left .22s cubic-bezier(.4,0,.2,1)';
+      thumb.style.left = '5px';
+      const fill = document.getElementById('gh-slide-fill');
+      if (fill) { fill.style.transition = 'width .22s cubic-bezier(.4,0,.2,1)'; fill.style.width = '54px'; }
+      const label = document.getElementById('gh-slide-label');
+      if (label) { label.style.transition = 'opacity .22s'; label.style.opacity = 1; }
+      setTimeout(() => {
+        thumb.style.transition = '';
+        if (fill)  fill.style.transition  = '';
+        if (label) label.style.transition = '';
+      }, 230);
+    }
+  };
+
+  thumb.addEventListener('mousedown',  e => { e.preventDefault(); start(e.clientX); });
+  document.addEventListener('mousemove', e => { if (ghSlideState) move(e.clientX); });
+  document.addEventListener('mouseup',   () => { if (ghSlideState) end(); });
+  thumb.addEventListener('touchstart',  e => { e.preventDefault(); start(e.touches[0].clientX); }, { passive: false });
+  document.addEventListener('touchmove', e => { if (ghSlideState) { e.preventDefault(); move(e.touches[0].clientX); } }, { passive: false });
+  document.addEventListener('touchend',  () => { if (ghSlideState) end(); });
 }
 
 async function ghLoad() {
@@ -1817,6 +2038,13 @@ async function ghLoad() {
   const [owner, repo] = repoStr.split('/');
   ghSaveConfig({ token, repo: repoStr });
 
+  // Gate behind warning + slider if local trips exist
+  if (trips.length > 0) { showGhLoadWarning(token, owner, repo); return; }
+  await executeGhLoad(token, owner, repo);
+}
+
+async function executeGhLoad(token, owner, repo) {
+  const repoStr = `${owner}/${repo}`;
   ghLog(`Looking for CSV files in ${repoStr}/data/ …`);
   let listing;
   try {
