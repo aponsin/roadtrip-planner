@@ -1186,9 +1186,10 @@ function init() {
   loadState();
   if (isMobile()) {
     const today = new Date();
-    // Center today in the 3-day mobile view (start = today − 1 day)
+    // Place today in the centre of row 3 (out of ~6 visible rows).
+    // Each row = 3 days, so go back 2 full rows + 1 centre offset = 7 days.
     const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    viewStart = new Date(todayMidnight.getTime() - DAY);
+    viewStart = new Date(todayMidnight.getTime() - 7 * DAY);
     sbOpen = false;
     document.getElementById('sb').classList.add('closed');
   }
