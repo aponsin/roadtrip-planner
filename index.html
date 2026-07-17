@@ -941,6 +941,7 @@ body {
   border: 1px solid #e2e8f0; cursor: pointer; transition: transform .12s;
 }
 .pop-photo-thumb:hover { transform: scale(1.08); }
+.photo-broken { border: 1.5px dashed #cbd5e1 !important; opacity: .85; }
 
 #photo-lightbox {
   display: none; position: fixed; inset: 0; z-index: 9500;
@@ -1375,7 +1376,10 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
 <div id="photo-lightbox" onclick="closePhotoLightbox(event)">
   <button class="lightbox-close" onclick="closePhotoLightbox()">✕</button>
   <button class="lightbox-nav lightbox-prev" onclick="lightboxNav(-1);event.stopPropagation()">‹</button>
-  <img id="lightbox-img" src="" onclick="event.stopPropagation()">
+  <div onclick="event.stopPropagation()" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+    <img id="lightbox-img" src="">
+    <div id="lightbox-error" style="display:none;color:#fff;font-size:13px;background:rgba(220,38,38,.35);padding:8px 16px;border-radius:8px">⚠ This photo is no longer available — it may have been removed from another device.</div>
+  </div>
   <button class="lightbox-nav lightbox-next" onclick="lightboxNav(1);event.stopPropagation()">›</button>
   <div class="lightbox-counter" id="lightbox-counter"></div>
 </div>
@@ -2178,7 +2182,7 @@ function openTripViz(tripId) {
       // ── Photos (only on the start day) ──
       if (ev.photos && ev.photos.length && isStart) {
         evExtra += `<div class="tviz-photos">` +
-          ev.photos.map((url, i) => `<img src="${url}" class="tviz-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})">`).join('') +
+          ev.photos.map((url, i) => `<img src="${url}" class="tviz-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})" onerror="photoErrHandler(this)">`).join('') +
           `</div>`;
       }
 
@@ -2274,7 +2278,17 @@ function openPhotoLightbox(evId, index) {
 function renderLightbox() {
   const ev = events.find(e => e.id === _lightboxEvId);
   if (!ev || !ev.photos || !ev.photos.length) { closePhotoLightbox(); return; }
-  document.getElementById('lightbox-img').src = ev.photos[_lightboxIndex];
+  const img = document.getElementById('lightbox-img');
+  const errEl = document.getElementById('lightbox-error');
+  img.classList.remove('photo-broken');
+  errEl.style.display = 'none';
+  img.style.display = '';
+  img.onerror = () => {
+    img.onerror = null;
+    img.style.display = 'none';
+    errEl.style.display = '';
+  };
+  img.src = ev.photos[_lightboxIndex];
   document.getElementById('lightbox-counter').textContent = `${_lightboxIndex + 1} / ${ev.photos.length}`;
   const multi = ev.photos.length > 1;
   document.querySelector('.lightbox-prev').style.display = multi ? '' : 'none';
@@ -2414,6 +2428,28 @@ const PHOTO_MAX_DIM = 1600;   // long-edge px cap
 const PHOTO_QUALITY  = 0.8;   // JPEG quality
 const PHOTO_MAX_COUNT = 5;
 
+// Gray "broken image" placeholder shown when a photo URL 404s (e.g. deleted from
+// another browser/device before this one synced). Swapped in via onerror so a
+// missing photo never shows the browser's default broken-image icon.
+const PHOTO_BROKEN_SVG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
+  '<rect width="100" height="100" rx="10" fill="#e2e8f0"/>' +
+  '<path d="M25 68 L42 46 L54 58 L68 38 L82 68 Z" fill="#cbd5e1"/>' +
+  '<circle cx="36" cy="36" r="7" fill="#cbd5e1"/>' +
+  '<line x1="15" y1="15" x2="85" y2="85" stroke="#f87171" stroke-width="6" stroke-linecap="round"/>' +
+  '</svg>'
+);
+
+// Attach to any <img> rendering a photo URL — swaps in the placeholder once,
+// tags the element so callers can style/detect the broken state, and sets a
+// helpful tooltip. Safe to call inline from template strings.
+function photoErrHandler(imgEl) {
+  imgEl.onerror = null; // prevent loops if the placeholder itself somehow fails
+  imgEl.src = PHOTO_BROKEN_SVG;
+  imgEl.classList.add('photo-broken');
+  imgEl.title = 'Photo unavailable — it may have been removed from another device';
+}
+
 let formPhotos = []; // { url, previewDataUrl, uploading, error } — state for the currently-open form
 
 // Resize/compress a File to a JPEG data URL via canvas
@@ -2493,7 +2529,7 @@ function renderFormPhotosGrid() {
     if (p.uploading) overlay = '<div class="f-photo-overlay">Uploading…</div>';
     else if (p.error) overlay = '<div class="f-photo-overlay err">Upload failed</div>';
     return `<div class="f-photo-thumb">
-      ${src ? `<img src="${src}">` : ''}
+      ${src ? `<img src="${src}" onerror="photoErrHandler(this)">` : ''}
       ${overlay}
       <button type="button" class="f-photo-remove" onclick="removeFormPhoto(${i})" title="Remove">✕</button>
     </div>`;
@@ -4219,7 +4255,7 @@ function showPop(e, ev) {
   const photosEl = document.getElementById('pop-photos');
   if (ev.photos && ev.photos.length) {
     photosEl.innerHTML = ev.photos.map((url, i) =>
-      `<img src="${url}" class="pop-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})">`
+      `<img src="${url}" class="pop-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})" onerror="photoErrHandler(this)">`
     ).join('');
     photosEl.style.display = 'flex';
   } else {
