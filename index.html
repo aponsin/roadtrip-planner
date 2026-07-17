@@ -2979,6 +2979,7 @@ async function executeGhLoad(token, owner, repo) {
           diningAddress:      get(row,'dining_address'),
           sightseeingAddress: get(row,'sightseeing_address'),
           linkedNextId:   null,
+          photos: get(row, 'photos') ? get(row, 'photos').split('|').filter(Boolean) : [],
         });
       }
       if (hasLinkCol) {
