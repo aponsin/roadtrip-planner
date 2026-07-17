@@ -906,6 +906,69 @@ body {
 .addr-link:hover { opacity: 1; }
 .addr-link.dim { opacity: .18; pointer-events: none; }
 
+/* ── PHOTOS (event form) ─────────────────── */
+.f-photos-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.f-photo-thumb {
+  position: relative; width: 72px; height: 72px; border-radius: 8px;
+  overflow: hidden; background: #f1f5f9; border: 1px solid #e2e8f0;
+}
+.f-photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.f-photo-overlay {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(15,23,42,.55); color: #fff; font-size: 9px; text-align: center; padding: 4px;
+}
+.f-photo-overlay.err { background: rgba(220,38,38,.75); }
+.f-photo-remove {
+  position: absolute; top: 2px; right: 2px; width: 18px; height: 18px;
+  border-radius: 50%; background: rgba(15,23,42,.7); color: #fff; border: none;
+  font-size: 10px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.f-photo-remove:hover { background: rgba(15,23,42,.9); }
+
+/* ── PHOTOS (trip summary + lightbox) ────── */
+.tviz-photos {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px; margin-top: 10px;
+}
+.tviz-photo-thumb {
+  width: 100%; height: 200px; object-fit: cover; border-radius: 8px;
+  border: 1px solid #e2e8f0; cursor: pointer; transition: transform .12s, box-shadow .12s;
+}
+.tviz-photo-thumb:hover { transform: scale(1.02); box-shadow: 0 4px 14px rgba(0,0,0,.2); }
+.pop-photos { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 4px; }
+.pop-photo-thumb {
+  width: 44px; height: 44px; object-fit: cover; border-radius: 5px;
+  border: 1px solid #e2e8f0; cursor: pointer; transition: transform .12s;
+}
+.pop-photo-thumb:hover { transform: scale(1.08); }
+
+#photo-lightbox {
+  display: none; position: fixed; inset: 0; z-index: 9500;
+  background: rgba(0,0,0,.88); align-items: center; justify-content: center;
+}
+#photo-lightbox.open { display: flex; }
+#photo-lightbox img { max-width: 88vw; max-height: 82vh; border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.lightbox-close {
+  position: absolute; top: 18px; right: 24px; width: 36px; height: 36px;
+  border-radius: 50%; background: rgba(255,255,255,.12); border: none; color: #fff;
+  font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background .15s;
+}
+.lightbox-close:hover { background: rgba(255,255,255,.24); }
+.lightbox-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.12);
+  border: none; color: #fff; font-size: 22px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: background .15s;
+}
+.lightbox-nav:hover { background: rgba(255,255,255,.24); }
+.lightbox-prev { left: 18px; }
+.lightbox-next { right: 18px; }
+.lightbox-counter {
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  color: #fff; font-size: 12px; background: rgba(255,255,255,.12); padding: 4px 12px; border-radius: 99px;
+}
+
 /* ── AUTOCOMPLETE ────────────────────────── */
 .ac-dropdown {
   position: absolute; top: calc(100% + 3px); left: 0; right: 0;
@@ -1214,6 +1277,15 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
         <div id="route-result"><button class="btn btn-g" onclick="fetchRoute()" style="padding:5px 10px;font-size:12px">↗ Get route</button></div>
       </div>
     </div>
+    <!-- Photos (all categories, up to 5) -->
+    <div class="form-row">
+      <div class="ff wide">
+        <label>Photos <span style="font-weight:400;color:#94a3b8">(up to 5)</span></label>
+        <div id="f-photos-grid" class="f-photos-grid"></div>
+        <input type="file" id="f-photos-input" accept="image/*" multiple style="display:none" onchange="handlePhotoFilesSelected(this.files)">
+        <button type="button" class="btn btn-g" id="f-photos-add-btn" onclick="document.getElementById('f-photos-input').click()" style="margin-top:6px;padding:5px 10px;font-size:12px">+ Add photo</button>
+      </div>
+    </div>
     <!-- Link status (full-width, shown for any chainable event) -->
     <div id="link-status-row" class="form-row" style="display:none;padding-top:2px">
       <div id="link-src-badge"  class="link-badge src" style="display:none"></div>
@@ -1266,6 +1338,7 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
   <div class="pop-time"  id="pop-time"></div>
   <div class="pop-desc"  id="pop-desc"></div>
   <div class="pop-driving" id="pop-driving" style="display:none"></div>
+  <div class="pop-photos" id="pop-photos" style="display:none"></div>
   <div class="pop-actions">
     <button class="pop-nav-btn" id="pop-nav-prev" onclick="popNavStep(-1)" title="Previous event">‹</button>
     <button class="pop-btn" onclick="editFromPop()">Edit</button>
@@ -1296,6 +1369,15 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
     <div class="tviz-stats" id="tviz-stats"></div>
     <div class="tviz-body" id="tviz-body"></div>
   </div>
+</div>
+
+<!-- Photo lightbox -->
+<div id="photo-lightbox" onclick="closePhotoLightbox(event)">
+  <button class="lightbox-close" onclick="closePhotoLightbox()">✕</button>
+  <button class="lightbox-nav lightbox-prev" onclick="lightboxNav(-1);event.stopPropagation()">‹</button>
+  <img id="lightbox-img" src="" onclick="event.stopPropagation()">
+  <button class="lightbox-nav lightbox-next" onclick="lightboxNav(1);event.stopPropagation()">›</button>
+  <div class="lightbox-counter" id="lightbox-counter"></div>
 </div>
 
 <script>
@@ -1863,6 +1945,7 @@ function deleteTrip(id) {
     ? `Delete this trip and its ${count} event(s)?`
     : 'Delete this trip?';
   if (!confirm(msg)) return;
+  events.filter(e => e.tripId === id).forEach(purgeEventPhotos);
   trips  = trips.filter(t => t.id !== id);
   events = events.filter(e => e.tripId !== id);
   save(); renderSidebar(); refreshTripSelect(); render();
@@ -1893,7 +1976,7 @@ const CSV_HEADERS = [
   'trip_name','trip_color',
   'title','category','start','end','description',
   'departure','arrival','distance_m','driving_seconds','time_on_road_h',
-  'sleeping_address','dining_address','sightseeing_address','event_ref','linked_next_ref',
+  'sleeping_address','dining_address','sightseeing_address','event_ref','linked_next_ref','photos',
 ];
 
 function csvCell(val) {
@@ -2092,6 +2175,13 @@ function openTripViz(tripId) {
         evExtra += `<div class="tviz-ev-desc">${esc(ev.description)}</div>`;
       }
 
+      // ── Photos (only on the start day) ──
+      if (ev.photos && ev.photos.length && isStart) {
+        evExtra += `<div class="tviz-photos">` +
+          ev.photos.map((url, i) => `<img src="${url}" class="tviz-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})">`).join('') +
+          `</div>`;
+      }
+
       bodyHtml += `<div class="tviz-ev" style="${cardStyle}">
         <div class="tviz-ev-icon">${isStart ? cat.emoji : '↕'}</div>
         <div class="tviz-ev-body">
@@ -2167,6 +2257,43 @@ function closeTripViz(e) {
 }
 function printTripViz() {
   window.print();
+}
+
+// ── PHOTO LIGHTBOX ──────────────────────────────────────────────────────────
+let _lightboxEvId = null, _lightboxIndex = 0;
+
+function openPhotoLightbox(evId, index) {
+  const ev = events.find(e => e.id === evId);
+  if (!ev || !ev.photos || !ev.photos.length) return;
+  _lightboxEvId = evId;
+  _lightboxIndex = index;
+  renderLightbox();
+  document.getElementById('photo-lightbox').classList.add('open');
+}
+
+function renderLightbox() {
+  const ev = events.find(e => e.id === _lightboxEvId);
+  if (!ev || !ev.photos || !ev.photos.length) { closePhotoLightbox(); return; }
+  document.getElementById('lightbox-img').src = ev.photos[_lightboxIndex];
+  document.getElementById('lightbox-counter').textContent = `${_lightboxIndex + 1} / ${ev.photos.length}`;
+  const multi = ev.photos.length > 1;
+  document.querySelector('.lightbox-prev').style.display = multi ? '' : 'none';
+  document.querySelector('.lightbox-next').style.display = multi ? '' : 'none';
+  document.getElementById('lightbox-counter').style.display = multi ? '' : 'none';
+}
+
+function lightboxNav(dir) {
+  const ev = events.find(e => e.id === _lightboxEvId);
+  if (!ev || !ev.photos) return;
+  _lightboxIndex = (_lightboxIndex + dir + ev.photos.length) % ev.photos.length;
+  renderLightbox();
+}
+
+function closePhotoLightbox(e) {
+  // Ignore clicks on the image or the nav/close buttons themselves (they stopPropagation already, but guard anyway)
+  if (e && e.target.id !== 'photo-lightbox') return;
+  document.getElementById('photo-lightbox').classList.remove('open');
+  _lightboxEvId = null;
 }
 
 async function fetchLegRoute(dep, arr) {
@@ -2282,6 +2409,137 @@ async function initAllLegMaps() {
   }
 }
 
+// ── EVENT PHOTOS ───────────────────────────────────────────────────────────────
+const PHOTO_MAX_DIM = 1600;   // long-edge px cap
+const PHOTO_QUALITY  = 0.8;   // JPEG quality
+const PHOTO_MAX_COUNT = 5;
+
+let formPhotos = []; // { url, previewDataUrl, uploading, error } — state for the currently-open form
+
+// Resize/compress a File to a JPEG data URL via canvas
+function resizeImageFile(file, maxDim = PHOTO_MAX_DIM, quality = PHOTO_QUALITY) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Could not decode image'));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// Upload a base64 JPEG to the repo's media/ folder, reusing the GH sync config/token
+async function ghUploadImage(base64Data, filename) {
+  const cfg = ghConfig();
+  if (!cfg.token || !cfg.repo) throw new Error('Configure GitHub sync first (Sync button in header).');
+  if (!cfg.repo.includes('/')) throw new Error('Repository must be in "owner/repo" format.');
+  const [owner, repo] = cfg.repo.split('/');
+  const path = `media/${filename}`;
+  const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `token ${cfg.token}`,
+      'Accept': 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ message: `Add event photo ${filename}`, content: base64Data }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.message || `Upload failed (${resp.status})`);
+  return `https://raw.githubusercontent.com/${owner}/${repo}/main/media/${filename}`;
+}
+
+// Delete an uploaded photo from the repo's media/ folder (best-effort, fire-and-forget)
+async function ghDeleteImage(url) {
+  try {
+    const cfg = ghConfig();
+    if (!cfg.token || !cfg.repo || !cfg.repo.includes('/')) return;
+    const m = url.match(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/[^/]+\/(media\/.+)$/);
+    if (!m) return; // not one of our uploaded photos — leave external URLs alone
+    const [, owner, repo, path] = m;
+    const existing = await ghApi('GET', path, null, cfg.token, owner, repo);
+    if (!existing) return; // already gone
+    await ghApi('DELETE', path, { message: `Delete event photo ${path}`, sha: existing.sha }, cfg.token, owner, repo);
+  } catch (e) {
+    console.warn('[photo delete] failed for', url, e);
+  }
+}
+
+// Purge every photo attached to an event (used on event/trip deletion)
+function purgeEventPhotos(ev) {
+  if (!ev || !ev.photos || !ev.photos.length) return;
+  ev.photos.forEach(url => ghDeleteImage(url));
+}
+
+function renderFormPhotosGrid() {
+  const grid = document.getElementById('f-photos-grid');
+  if (!grid) return;
+  grid.innerHTML = formPhotos.map((p, i) => {
+    const src = p.url || p.previewDataUrl || '';
+    let overlay = '';
+    if (p.uploading) overlay = '<div class="f-photo-overlay">Uploading…</div>';
+    else if (p.error) overlay = '<div class="f-photo-overlay err">Upload failed</div>';
+    return `<div class="f-photo-thumb">
+      ${src ? `<img src="${src}">` : ''}
+      ${overlay}
+      <button type="button" class="f-photo-remove" onclick="removeFormPhoto(${i})" title="Remove">✕</button>
+    </div>`;
+  }).join('');
+  const addBtn = document.getElementById('f-photos-add-btn');
+  if (addBtn) addBtn.style.display = formPhotos.length >= PHOTO_MAX_COUNT ? 'none' : '';
+}
+
+function removeFormPhoto(i) {
+  const entry = formPhotos[i];
+  if (entry) {
+    if (entry.uploading) entry._removed = true; // purge once its in-flight upload resolves
+    else if (entry.url)  ghDeleteImage(entry.url);
+  }
+  formPhotos.splice(i, 1);
+  renderFormPhotosGrid();
+}
+
+async function handlePhotoFilesSelected(fileList) {
+  const files = Array.from(fileList || []);
+  const remaining = PHOTO_MAX_COUNT - formPhotos.length;
+  const toAdd = files.slice(0, remaining);
+  document.getElementById('f-photos-input').value = ''; // allow re-selecting the same file later
+
+  for (const file of toAdd) {
+    const entry = { uploading: true, previewDataUrl: null, url: null, error: false };
+    formPhotos.push(entry);
+    renderFormPhotosGrid();
+    try {
+      const dataUrl = await resizeImageFile(file);
+      entry.previewDataUrl = dataUrl;
+      renderFormPhotosGrid();
+      const base64 = dataUrl.split(',')[1];
+      const filename = `evphoto-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.jpg`;
+      entry.url = await ghUploadImage(base64, filename);
+      entry.uploading = false;
+      if (entry._removed) ghDeleteImage(entry.url); // was removed while still uploading
+    } catch (e) {
+      entry.uploading = false;
+      entry.error = true;
+      console.error('[photo upload]', e);
+    }
+    renderFormPhotosGrid();
+  }
+}
+
 // ── GITHUB SYNC ────────────────────────────────────────────────────────────────
 const GH_CONFIG_KEY = 'rtp4_gh';
 
@@ -2339,6 +2597,7 @@ function ghBuildCSV(tripId) {
     ev.sleepingAddress || '', ev.diningAddress || '', ev.sightseeingAddress || '',
     refMap[ev.id],
     ev.linkedNextId != null ? (refMap[ev.linkedNextId] ?? '') : '',
+    (ev.photos || []).join('|'),
   ].map(csvCell).join(','));
   return [CSV_HEADERS.join(','), ...rows].join('\r\n');
 }
@@ -2764,6 +3023,7 @@ function exportTrip(tripId) {
     ev.sleepingAddress || '', ev.diningAddress || '', ev.sightseeingAddress || '',
     refMap[ev.id],                                           // event_ref (row index)
     ev.linkedNextId != null ? (refMap[ev.linkedNextId] ?? '') : '',  // linked_next_ref
+    (ev.photos || []).join('|'),                              // photos (pipe-joined URLs)
   ].map(csvCell).join(','));
 
   const csv  = [CSV_HEADERS.join(','), ...rows].join('\r\n');
@@ -2865,6 +3125,7 @@ function parseImportCSV(text) {
       diningAddress:      get(row, 'dining_address'),
       sightseeingAddress: get(row, 'sightseeing_address'),
       linkedNextId:   null,
+      photos: get(row, 'photos') ? get(row, 'photos').split('|').filter(Boolean) : [],
     });
     imported++;
   }
@@ -3216,6 +3477,9 @@ function openForm(evObj, defaultDate, defaultTripId) {
     document.getElementById('f-dur-h').value = Math.floor(durMs / 3600000);
     document.getElementById('f-dur-m').value = Math.round((durMs % 3600000) / 60000);
     document.getElementById('f-desc').value  = evObj.description || '';
+    // Photos — existing uploaded URLs become pre-filled entries
+    formPhotos = (evObj.photos || []).map(url => ({ url, previewDataUrl: null, uploading: false, error: false }));
+    renderFormPhotosGrid();
     // Sleeping fields
     const isSleeping = evObj.category === 'sleeping';
     document.getElementById('sleeping-fields').style.display = isSleeping ? '' : 'none';
@@ -3265,6 +3529,8 @@ function openForm(evObj, defaultDate, defaultTripId) {
     document.getElementById('f-dur-h').value = 1;
     document.getElementById('f-dur-m').value = 0;
     document.getElementById('f-desc').value  = '';
+    formPhotos = [];
+    renderFormPhotosGrid();
     // New events default to driving — show driving fields, hide sleeping
     document.getElementById('driving-fields').style.display      = '';
     document.getElementById('sleeping-fields').style.display     = 'none';
@@ -3808,6 +4074,8 @@ function submitForm() {
   if (!start)  { alert('Please set a start time.');  return; }
   const durMs = (durH * 60 + durM) * 60000;
   if (durMs <= 0) { alert('Duration must be at least 15 minutes.'); return; }
+  if (formPhotos.some(p => p.uploading)) { alert('Please wait for photo uploads to finish before saving.'); return; }
+  const photos = formPhotos.filter(p => p.url).map(p => p.url);
 
   const end = new Date(start.getTime() + durMs);
 
@@ -3842,10 +4110,10 @@ function submitForm() {
         // Re-warm the new leg in background
         setTimeout(() => warmLegMaps(), 500);
       }
-      Object.assign(savedEv, { title, category: cat, tripId, start, end, description: desc, ...drivingFields, linkedNextId: keepLink ?? null });
+      Object.assign(savedEv, { title, category: cat, tripId, start, end, description: desc, photos, ...drivingFields, linkedNextId: keepLink ?? null });
     }
   } else {
-    savedEv = { id: nextEvId++, title, category: cat, tripId, start, end, description: desc, ...drivingFields, linkedNextId: null };
+    savedEv = { id: nextEvId++, title, category: cat, tripId, start, end, description: desc, photos, ...drivingFields, linkedNextId: null };
     events.push(savedEv);
     closeForm(); render();
     handleChainLinks(savedEv);
@@ -3945,6 +4213,18 @@ function showPop(e, ev) {
 
   drivingEl.innerHTML = popDrivingHtml;
   drivingEl.style.display = showDrivingEl ? 'flex' : 'none';
+
+  // Photos
+  const photosEl = document.getElementById('pop-photos');
+  if (ev.photos && ev.photos.length) {
+    photosEl.innerHTML = ev.photos.map((url, i) =>
+      `<img src="${url}" class="pop-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})">`
+    ).join('');
+    photosEl.style.display = 'flex';
+  } else {
+    photosEl.innerHTML = '';
+    photosEl.style.display = 'none';
+  }
 
   const pop = document.getElementById('pop');
   pop.style.display = 'block';
@@ -4150,6 +4430,12 @@ function onDocClick(e) {
 }
 
 function onKeyDown(e) {
+  // Photo lightbox takes priority over other Escape/arrow handling while open
+  if (document.getElementById('photo-lightbox')?.classList.contains('open')) {
+    if (e.key === 'Escape')      { document.getElementById('photo-lightbox').classList.remove('open'); _lightboxEvId = null; return; }
+    if (e.key === 'ArrowLeft')   { lightboxNav(-1); return; }
+    if (e.key === 'ArrowRight')  { lightboxNav(1);  return; }
+  }
   if (e.key === 'Escape') { closePop(); closeForm(); closeCtxMenu(); document.getElementById('trip-viz-overlay').classList.remove('open'); closeGHModal(); }
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key.toLowerCase() === 'z') {
@@ -4177,6 +4463,9 @@ function deepCopyEvents() {
 }
 
 function recordUndo(type, snapshot) {
+  // A previously-deleted event about to fall out of the undo stack is now
+  // permanently gone — safe to purge its photos from GitHub.
+  if (lastUndoable && lastUndoable.type === 'delete') purgeEventPhotos(lastUndoable.snapshot);
   lastUndoable = {
     type,
     snapshot: { ...snapshot, start: new Date(snapshot.start), end: new Date(snapshot.end) },
@@ -4187,6 +4476,7 @@ function recordUndo(type, snapshot) {
 
 // Records undo for day-ops: stores full events snapshot + the op params for redo
 function recordDayOpUndo(op, date) {
+  if (lastUndoable && lastUndoable.type === 'delete') purgeEventPhotos(lastUndoable.snapshot);
   lastUndoable = { type: 'day-op', op, date, eventsSnapshot: deepCopyEvents() };
   lastRedoable = null;
   refreshUndoBtns();
