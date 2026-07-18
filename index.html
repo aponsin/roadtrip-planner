@@ -941,7 +941,6 @@ body {
   border: 1px solid #e2e8f0; cursor: pointer; transition: transform .12s;
 }
 .pop-photo-thumb:hover { transform: scale(1.08); }
-.photo-broken { border: 1.5px dashed #cbd5e1 !important; opacity: .85; }
 
 #photo-lightbox {
   display: none; position: fixed; inset: 0; z-index: 9500;
@@ -956,6 +955,13 @@ body {
   transition: background .15s;
 }
 .lightbox-close:hover { background: rgba(255,255,255,.24); }
+.lightbox-download {
+  position: absolute; top: 18px; right: 70px; width: 36px; height: 36px;
+  border-radius: 50%; background: rgba(255,255,255,.12); border: none; color: #fff;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background .15s;
+}
+.lightbox-download:hover { background: rgba(255,255,255,.24); }
 .lightbox-nav {
   position: absolute; top: 50%; transform: translateY(-50%);
   width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.12);
@@ -1375,11 +1381,14 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
 <!-- Photo lightbox -->
 <div id="photo-lightbox" onclick="closePhotoLightbox(event)">
   <button class="lightbox-close" onclick="closePhotoLightbox()">✕</button>
+  <button class="lightbox-download" id="lightbox-download-btn" onclick="downloadCurrentLightboxPhoto();event.stopPropagation()" title="Download photo">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M8 1.5v8.5M8 10l-3-3M8 10l3-3" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M2.5 12v1.5A1.5 1.5 0 0 0 4 15h8a1.5 1.5 0 0 0 1.5-1.5V12" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+  </button>
   <button class="lightbox-nav lightbox-prev" onclick="lightboxNav(-1);event.stopPropagation()">‹</button>
-  <div onclick="event.stopPropagation()" style="display:flex;flex-direction:column;align-items:center;gap:10px">
-    <img id="lightbox-img" src="">
-    <div id="lightbox-error" style="display:none;color:#fff;font-size:13px;background:rgba(220,38,38,.35);padding:8px 16px;border-radius:8px">⚠ This photo is no longer available — it may have been removed from another device.</div>
-  </div>
+  <img id="lightbox-img" src="" onclick="event.stopPropagation()">
   <button class="lightbox-nav lightbox-next" onclick="lightboxNav(1);event.stopPropagation()">›</button>
   <div class="lightbox-counter" id="lightbox-counter"></div>
 </div>
@@ -2182,7 +2191,7 @@ function openTripViz(tripId) {
       // ── Photos (only on the start day) ──
       if (ev.photos && ev.photos.length && isStart) {
         evExtra += `<div class="tviz-photos">` +
-          ev.photos.map((url, i) => `<img src="${url}" class="tviz-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})" onerror="photoErrHandler(this)">`).join('') +
+          ev.photos.map((url, i) => `<img src="${url}" class="tviz-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})" onerror="hideBrokenPhotoThumb(this)">`).join('') +
           `</div>`;
       }
 
@@ -2265,42 +2274,77 @@ function printTripViz() {
 
 // ── PHOTO LIGHTBOX ──────────────────────────────────────────────────────────
 let _lightboxEvId = null, _lightboxIndex = 0;
+let _lightboxPhotos = []; // local working copy of the event's photos — broken
+                           // entries are spliced out here only (never mutates ev.photos)
 
 function openPhotoLightbox(evId, index) {
   const ev = events.find(e => e.id === evId);
   if (!ev || !ev.photos || !ev.photos.length) return;
   _lightboxEvId = evId;
+  _lightboxPhotos = ev.photos.slice();
   _lightboxIndex = index;
   renderLightbox();
   document.getElementById('photo-lightbox').classList.add('open');
 }
 
 function renderLightbox() {
-  const ev = events.find(e => e.id === _lightboxEvId);
-  if (!ev || !ev.photos || !ev.photos.length) { closePhotoLightbox(); return; }
+  if (!_lightboxPhotos.length) { closePhotoLightbox(); return; }
+  if (_lightboxIndex >= _lightboxPhotos.length) _lightboxIndex = 0;
   const img = document.getElementById('lightbox-img');
-  const errEl = document.getElementById('lightbox-error');
-  img.classList.remove('photo-broken');
-  errEl.style.display = 'none';
   img.style.display = '';
   img.onerror = () => {
     img.onerror = null;
-    img.style.display = 'none';
-    errEl.style.display = '';
+    // Photo is broken (e.g. deleted from another device) — silently drop it
+    // from this viewing session and move on to the next one, if any.
+    _lightboxPhotos.splice(_lightboxIndex, 1);
+    renderLightbox();
   };
-  img.src = ev.photos[_lightboxIndex];
-  document.getElementById('lightbox-counter').textContent = `${_lightboxIndex + 1} / ${ev.photos.length}`;
-  const multi = ev.photos.length > 1;
+  img.src = _lightboxPhotos[_lightboxIndex];
+  document.getElementById('lightbox-counter').textContent = `${_lightboxIndex + 1} / ${_lightboxPhotos.length}`;
+  const multi = _lightboxPhotos.length > 1;
   document.querySelector('.lightbox-prev').style.display = multi ? '' : 'none';
   document.querySelector('.lightbox-next').style.display = multi ? '' : 'none';
   document.getElementById('lightbox-counter').style.display = multi ? '' : 'none';
 }
 
 function lightboxNav(dir) {
-  const ev = events.find(e => e.id === _lightboxEvId);
-  if (!ev || !ev.photos) return;
-  _lightboxIndex = (_lightboxIndex + dir + ev.photos.length) % ev.photos.length;
+  if (!_lightboxPhotos.length) return;
+  _lightboxIndex = (_lightboxIndex + dir + _lightboxPhotos.length) % _lightboxPhotos.length;
   renderLightbox();
+}
+
+// True on actual phones/tablets (UA-based) — distinct from isMobile()'s viewport-width
+// check above, since download behavior should key off the real device, not window size.
+function isMobileDevice() {
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+}
+
+// Download a single photo. iOS Safari (and mobile browsers generally) don't reliably
+// honor a forced blob download for images — the standard, reliable way to get a photo
+// into the Camera Roll/Gallery on mobile is to open the raw image in a new tab and let
+// the user long-press → "Save Image" / "Add to Photos" (native OS gesture). Desktop
+// browsers get a proper forced download with a clean filename instead.
+function downloadPhoto(url) {
+  if (isMobileDevice()) {
+    window.open(url, '_blank');
+    return;
+  }
+  fetch(url)
+    .then(r => { if (!r.ok) throw new Error('fetch failed'); return r.blob(); })
+    .then(blob => {
+      const blobUrl = URL.createObjectURL(blob);
+      const filename = (url.split('/').pop() || 'photo.jpg').split('?')[0];
+      const a = document.createElement('a');
+      a.href = blobUrl; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
+    })
+    .catch(() => window.open(url, '_blank')); // fallback: let the user save manually
+}
+
+function downloadCurrentLightboxPhoto() {
+  if (!_lightboxPhotos.length) return;
+  downloadPhoto(_lightboxPhotos[_lightboxIndex]);
 }
 
 function closePhotoLightbox(e) {
@@ -2308,6 +2352,7 @@ function closePhotoLightbox(e) {
   if (e && e.target.id !== 'photo-lightbox') return;
   document.getElementById('photo-lightbox').classList.remove('open');
   _lightboxEvId = null;
+  _lightboxPhotos = [];
 }
 
 async function fetchLegRoute(dep, arr) {
@@ -2428,26 +2473,18 @@ const PHOTO_MAX_DIM = 1600;   // long-edge px cap
 const PHOTO_QUALITY  = 0.8;   // JPEG quality
 const PHOTO_MAX_COUNT = 5;
 
-// Gray "broken image" placeholder shown when a photo URL 404s (e.g. deleted from
-// another browser/device before this one synced). Swapped in via onerror so a
-// missing photo never shows the browser's default broken-image icon.
-const PHOTO_BROKEN_SVG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
-  '<rect width="100" height="100" rx="10" fill="#e2e8f0"/>' +
-  '<path d="M25 68 L42 46 L54 58 L68 38 L82 68 Z" fill="#cbd5e1"/>' +
-  '<circle cx="36" cy="36" r="7" fill="#cbd5e1"/>' +
-  '<line x1="15" y1="15" x2="85" y2="85" stroke="#f87171" stroke-width="6" stroke-linecap="round"/>' +
-  '</svg>'
-);
-
-// Attach to any <img> rendering a photo URL — swaps in the placeholder once,
-// tags the element so callers can style/detect the broken state, and sets a
-// helpful tooltip. Safe to call inline from template strings.
-function photoErrHandler(imgEl) {
-  imgEl.onerror = null; // prevent loops if the placeholder itself somehow fails
-  imgEl.src = PHOTO_BROKEN_SVG;
-  imgEl.classList.add('photo-broken');
-  imgEl.title = 'Photo unavailable — it may have been removed from another device';
+// Called on <img> load failure (e.g. photo deleted from another device before this
+// one synced). Silently removes the thumbnail entirely — no placeholder, no message
+// — and collapses the surrounding container if that was its only photo, so nothing
+// visually indicates a photo was ever there.
+// wrapperSelector: optional selector for an ancestor to remove instead of the <img>
+// itself (e.g. the event form's '.f-photo-thumb' card, which also holds a remove button).
+function hideBrokenPhotoThumb(imgEl, wrapperSelector) {
+  const wrapper = wrapperSelector ? imgEl.closest(wrapperSelector) : imgEl;
+  if (!wrapper) return;
+  const container = wrapper.parentElement;
+  wrapper.remove();
+  if (container && container.children.length === 0) container.style.display = 'none';
 }
 
 let formPhotos = []; // { url, previewDataUrl, uploading, error } — state for the currently-open form
@@ -2529,7 +2566,7 @@ function renderFormPhotosGrid() {
     if (p.uploading) overlay = '<div class="f-photo-overlay">Uploading…</div>';
     else if (p.error) overlay = '<div class="f-photo-overlay err">Upload failed</div>';
     return `<div class="f-photo-thumb">
-      ${src ? `<img src="${src}" onerror="photoErrHandler(this)">` : ''}
+      ${src ? `<img src="${src}" onerror="hideBrokenPhotoThumb(this, '.f-photo-thumb')">` : ''}
       ${overlay}
       <button type="button" class="f-photo-remove" onclick="removeFormPhoto(${i})" title="Remove">✕</button>
     </div>`;
@@ -4255,7 +4292,7 @@ function showPop(e, ev) {
   const photosEl = document.getElementById('pop-photos');
   if (ev.photos && ev.photos.length) {
     photosEl.innerHTML = ev.photos.map((url, i) =>
-      `<img src="${url}" class="pop-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})" onerror="photoErrHandler(this)">`
+      `<img src="${url}" class="pop-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})" onerror="hideBrokenPhotoThumb(this)">`
     ).join('');
     photosEl.style.display = 'flex';
   } else {
