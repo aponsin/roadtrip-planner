@@ -162,6 +162,96 @@ body {
 .gh-hint code {
   background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-size: 11px;
 }
+/* ── PHOTO IMPORT MODAL ─────────────────── */
+#import-overlay {
+  display: none; position: fixed; inset: 0; z-index: 9100;
+  background: rgba(15,23,42,.55); backdrop-filter: blur(3px);
+  align-items: center; justify-content: center;
+}
+#import-overlay.open { display: flex; }
+#import-modal {
+  background: #fff; border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.22);
+  width: min(560px, 94vw); max-height: 86vh;
+  display: flex; flex-direction: column;
+}
+.import-header {
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid #e2e8f0; padding: 18px 22px 14px; flex-shrink: 0;
+}
+.import-title { font-size: 16px; font-weight: 700; color: #0f172a; flex: 1; }
+.import-close {
+  width: 28px; height: 28px; border-radius: 6px;
+  background: none; border: none; cursor: pointer;
+  font-size: 16px; color: #94a3b8; display: flex; align-items: center; justify-content: center;
+}
+.import-close:hover { background: #f1f5f9; color: #0f172a; }
+.import-body { padding: 20px 22px 22px; overflow-y: auto; }
+.import-picker {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 36px 20px; border: 2px dashed #cbd5e1; border-radius: 12px;
+  text-align: center;
+}
+.import-picker-icon { font-size: 32px; }
+.import-picker-hint { font-size: 12px; color: #64748b; max-width: 340px; line-height: 1.6; }
+.import-pick-btn {
+  padding: 10px 20px; border-radius: 9px; border: none; cursor: pointer;
+  background: #1d4ed8; color: #fff; font-size: 13px; font-weight: 700; font-family: inherit;
+}
+.import-pick-btn:hover { background: #1e40af; }
+.import-summary {
+  display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.import-summary-chip {
+  padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;
+}
+.import-summary-chip.ok       { background: #d1fae5; color: #065f46; }
+.import-summary-chip.pending  { background: #fef3c7; color: #92400e; }
+.import-summary-chip.progress { background: #dbeafe; color: #1e40af; }
+.import-progress-row, .import-review-item {
+  display: flex; gap: 12px; align-items: center;
+  padding: 9px 10px; border-radius: 9px; margin-bottom: 6px;
+  background: #f8fafc; border: 1px solid #f1f5f9;
+}
+.import-thumb {
+  width: 52px; height: 52px; border-radius: 7px; object-fit: cover; flex-shrink: 0;
+  background: #e2e8f0;
+}
+.import-review-item { flex-wrap: wrap; }
+.import-review-body { flex: 1; min-width: 160px; }
+.import-review-meta { font-size: 11px; color: #64748b; margin-bottom: 4px; }
+.import-review-status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.import-review-status.ambiguous { color: #d97706; }
+.import-review-status.unmatched { color: #dc2626; }
+.import-review-status.overflow  { color: #7c3aed; }
+.import-review-select {
+  padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 6px;
+  font-size: 12px; font-family: inherit; color: #0f172a; max-width: 100%;
+}
+.import-review-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.import-btn-sm {
+  padding: 5px 10px; border-radius: 6px; border: 1px solid #e2e8f0; cursor: pointer;
+  font-size: 11px; font-weight: 700; font-family: inherit; background: #fff; color: #334155;
+}
+.import-btn-sm:hover { background: #f1f5f9; }
+.import-btn-sm.primary { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+.import-btn-sm.primary:hover { background: #1e40af; }
+.import-btn-sm.danger { color: #dc2626; }
+.import-btn-sm.danger:hover { background: #fef2f2; }
+.import-section-title {
+  font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase;
+  letter-spacing: .6px; margin: 14px 0 8px;
+}
+.import-section-title:first-child { margin-top: 0; }
+.import-empty-note { font-size: 12px; color: #94a3b8; text-align: center; padding: 10px; }
+.import-add-more {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 9px; border-radius: 8px; border: 1.5px dashed #cbd5e1;
+  background: none; cursor: pointer; font-size: 12px; font-weight: 600; color: #475569;
+  width: 100%; margin-top: 10px;
+}
+.import-add-more:hover { background: #f8fafc; }
+
 /* ── GH LOAD WARNING + SLIDER ──────────── */
 #gh-load-warn { margin-top: 12px; }
 .gh-warn-banner {
@@ -466,7 +556,7 @@ body {
   width: 5px; height: 36px; border-radius: 3px; flex-shrink: 0;
 }
 .tviz-title { font-size: 18px; font-weight: 700; color: #0f172a; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tviz-refresh-btn, .tviz-print-btn, .tviz-close { flex-shrink: 0; }
+.tviz-refresh-btn, .tviz-print-btn, .tviz-import-btn, .tviz-close { flex-shrink: 0; }
 .tviz-close {
   width: 28px; height: 28px; border-radius: 6px;
   background: none; border: none; cursor: pointer;
@@ -602,6 +692,20 @@ body {
 }
 .tviz-refresh-btn:hover { background: #e2e8f0; color: #0f172a; }
 .tviz-refresh-btn:disabled { opacity: .5; cursor: default; }
+.tviz-import-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: 7px; position: relative;
+  background: #eff6ff; border: 1px solid #bfdbfe; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: #1d4ed8;
+  transition: all .15s;
+}
+.tviz-import-btn:hover { background: #dbeafe; }
+.tviz-import-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: #dc2626; color: #fff; font-size: 10px; font-weight: 700;
+  margin-left: 2px;
+}
 @media (max-width: 680px) {
   :root { --lbl-w: 56px; }
 
@@ -687,7 +791,7 @@ body {
     margin-top: 18px;
   }
   .tviz-ev { break-inside: avoid; page-break-inside: avoid; }
-  .tviz-close, .tviz-print-btn { display: none !important; }
+  .tviz-close, .tviz-print-btn, .tviz-import-btn { display: none !important; }
   .tviz-map-btn { margin: 12px 0 0 !important; }
   a { color: #0f172a !important; }
 }
@@ -1033,6 +1137,7 @@ body.read-only .btn-new-event,
 body.read-only .btn-gh-sync,
 body.read-only .btn-new-trip,
 body.read-only .btn-import-trip,
+body.read-only .tviz-import-btn,
 body.read-only .pop-btn { display: none !important; }
 /* In read-only mode, hide rename / delete / share buttons but keep viz + export */
 body.read-only .trip-act-btn.del,
@@ -1067,6 +1172,7 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
 </style>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" crossorigin="">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin=""></script>
+<script src="https://cdn.jsdelivr.net/npm/exifr/dist/lite.umd.js" crossorigin=""></script>
 </head>
 <body>
 
@@ -1284,10 +1390,10 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
         <div id="route-result"><button class="btn btn-g" onclick="fetchRoute()" style="padding:5px 10px;font-size:12px">↗ Get route</button></div>
       </div>
     </div>
-    <!-- Photos (all categories, up to 5) -->
+    <!-- Photos (all categories, up to 9) -->
     <div class="form-row">
       <div class="ff wide">
-        <label>Photos <span style="font-weight:400;color:#94a3b8">(up to 5)</span></label>
+        <label>Photos <span style="font-weight:400;color:#94a3b8">(up to 9)</span></label>
         <div id="f-photos-grid" class="f-photos-grid"></div>
         <input type="file" id="f-photos-input" accept="image/*" multiple style="display:none" onchange="handlePhotoFilesSelected(this.files)">
         <button type="button" class="btn btn-g" id="f-photos-add-btn" onclick="document.getElementById('f-photos-input').click()" style="margin-top:6px;padding:5px 10px;font-size:12px">+ Add photo</button>
@@ -1362,6 +1468,15 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
     <div class="tviz-header">
       <div class="tviz-color-bar" id="tviz-color-bar"></div>
       <div class="tviz-title" id="tviz-title"></div>
+      <button class="tviz-import-btn" id="tviz-import-btn" onclick="openImportModal(tvizCurrentTripId)" title="Import photos from your camera roll">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="1.5" y="3.5" width="13" height="10" rx="1.3" stroke="currentColor" stroke-width="1.3"/>
+          <circle cx="5.2" cy="7" r="1.2" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M2 12l3.6-3.6a1 1 0 0 1 1.4 0L9.5 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          <path d="M8.5 11.2l1.6-1.6a1 1 0 0 1 1.4 0L14 12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        </svg>
+        Import Photos<span class="tviz-import-badge" id="tviz-import-badge" style="display:none"></span>
+      </button>
       <button class="tviz-print-btn" onclick="printTripViz()" title="Print / Save as PDF">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect x="3" y="1" width="10" height="7" rx="1" stroke="currentColor" stroke-width="1.4"/>
@@ -1391,6 +1506,18 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
   <img id="lightbox-img" src="" onclick="event.stopPropagation()">
   <button class="lightbox-nav lightbox-next" onclick="lightboxNav(1);event.stopPropagation()">›</button>
   <div class="lightbox-counter" id="lightbox-counter"></div>
+</div>
+
+<!-- Photo Import Modal -->
+<div id="import-overlay" onclick="if(event.target.id==='import-overlay') closeImportModal()">
+  <div id="import-modal">
+    <div class="import-header">
+      <div class="import-title">Import Photos</div>
+      <button class="import-close" onclick="closeImportModal()">✕</button>
+    </div>
+    <div class="import-body" id="import-body"></div>
+    <input type="file" id="import-file-input" accept="image/*" multiple style="display:none" onchange="handleImportFilesSelected(this.files)">
+  </div>
 </div>
 
 <script>
@@ -1959,6 +2086,7 @@ function deleteTrip(id) {
     : 'Delete this trip?';
   if (!confirm(msg)) return;
   events.filter(e => e.tripId === id).forEach(purgeEventPhotos);
+  discardAllPendingImports(id);
   trips  = trips.filter(t => t.id !== id);
   events = events.filter(e => e.tripId !== id);
   save(); renderSidebar(); refreshTripSelect(); render();
@@ -2000,9 +2128,12 @@ function csvCell(val) {
 }
 
 // ── TRIP VISUALIZATION ─────────────────────────────────────────────────────────
+let tvizCurrentTripId = null;
 function openTripViz(tripId) {
   const trip = trips.find(t => t.id === tripId);
   if (!trip) return;
+  tvizCurrentTripId = tripId;
+  updateImportBadge();
   const tripEvs = events.filter(e => e.tripId === tripId)
                         .sort((a, b) => a.start - b.start);
   if (!tripEvs.length) { alert('This trip has no events to display.'); return; }
@@ -2471,7 +2602,7 @@ async function initAllLegMaps() {
 // ── EVENT PHOTOS ───────────────────────────────────────────────────────────────
 const PHOTO_MAX_DIM = 1600;   // long-edge px cap
 const PHOTO_QUALITY  = 0.8;   // JPEG quality
-const PHOTO_MAX_COUNT = 5;
+const PHOTO_MAX_COUNT = 9;
 
 // Called on <img> load failure (e.g. photo deleted from another device before this
 // one synced). Silently removes the thumbnail entirely — no placeholder, no message
@@ -2514,13 +2645,14 @@ function resizeImageFile(file, maxDim = PHOTO_MAX_DIM, quality = PHOTO_QUALITY) 
   });
 }
 
-// Upload a base64 JPEG to the repo's media/ folder, reusing the GH sync config/token
-async function ghUploadImage(base64Data, filename) {
+// Upload a base64 JPEG to the repo's media/ folder (or a subfolder, e.g. for staged
+// import photos), reusing the GH sync config/token
+async function ghUploadImage(base64Data, filename, folder = 'media') {
   const cfg = ghConfig();
   if (!cfg.token || !cfg.repo) throw new Error('Configure GitHub sync first (Sync button in header).');
   if (!cfg.repo.includes('/')) throw new Error('Repository must be in "owner/repo" format.');
   const [owner, repo] = cfg.repo.split('/');
-  const path = `media/${filename}`;
+  const path = `${folder}/${filename}`;
   const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
     method: 'PUT',
     headers: {
@@ -2528,11 +2660,49 @@ async function ghUploadImage(base64Data, filename) {
       'Accept': 'application/vnd.github.v3+json',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ message: `Add event photo ${filename}`, content: base64Data }),
+    body: JSON.stringify({ message: `Add photo ${path}`, content: base64Data }),
   });
   const data = await resp.json();
   if (!resp.ok) throw new Error(data.message || `Upload failed (${resp.status})`);
-  return `https://raw.githubusercontent.com/${owner}/${repo}/main/media/${filename}`;
+  return `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
+}
+
+// Move a staged import photo into the final media/ folder (commit it), or discard it
+// entirely. Both re-encode nothing — they reuse the already-uploaded bytes via the
+// Contents API's GET/PUT/DELETE, so no re-upload from the client is needed.
+function ghParseRepoPath(url) {
+  const m = url.match(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/[^/]+\/(.+)$/);
+  return m ? { owner: m[1], repo: m[2], path: m[3] } : null;
+}
+async function ghCommitStagedPhoto(stagingUrl, finalFilename) {
+  const cfg = ghConfig();
+  const loc = ghParseRepoPath(stagingUrl);
+  if (!loc || !cfg.token) throw new Error('Cannot commit photo — missing GitHub config or invalid URL.');
+  const existing = await ghApi('GET', loc.path, null, cfg.token, loc.owner, loc.repo);
+  if (!existing) throw new Error('Staged photo no longer exists on GitHub.');
+  const toPath = `media/${finalFilename}`;
+  await ghApi('PUT', toPath, {
+    message: `Commit imported photo ${finalFilename}`,
+    content: existing.content.replace(/\n/g, ''),
+  }, cfg.token, loc.owner, loc.repo);
+  await ghApi('DELETE', loc.path, {
+    message: `Remove staged photo ${loc.path}`,
+    sha: existing.sha,
+  }, cfg.token, loc.owner, loc.repo);
+  return `https://raw.githubusercontent.com/${loc.owner}/${loc.repo}/main/${toPath}`;
+}
+// Discard a staged photo entirely (rejected during review, or import abandoned)
+async function ghDiscardStagedPhoto(stagingUrl) {
+  try {
+    const cfg = ghConfig();
+    const loc = ghParseRepoPath(stagingUrl);
+    if (!loc || !cfg.token) return;
+    const existing = await ghApi('GET', loc.path, null, cfg.token, loc.owner, loc.repo);
+    if (!existing) return;
+    await ghApi('DELETE', loc.path, { message: `Discard staged photo ${loc.path}`, sha: existing.sha }, cfg.token, loc.owner, loc.repo);
+  } catch (e) {
+    console.warn('[staged photo discard] failed for', stagingUrl, e);
+  }
 }
 
 // Delete an uploaded photo from the repo's media/ folder (best-effort, fire-and-forget)
@@ -2603,7 +2773,16 @@ async function handlePhotoFilesSelected(fileList) {
       const filename = `evphoto-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.jpg`;
       entry.url = await ghUploadImage(base64, filename);
       entry.uploading = false;
-      if (entry._removed) ghDeleteImage(entry.url); // was removed while still uploading
+      if (entry._removed) {
+        ghDeleteImage(entry.url); // was removed while still uploading
+      } else {
+        // Record this photo's content hash so a later bulk photo import won't
+        // re-upload/re-attach the same original file if it's re-selected.
+        sha256HexOfFile(file).then(hash => {
+          const tid = parseInt(document.getElementById('f-trip')?.value) || null;
+          if (tid != null) recordPhotoHash(tid, hash, entry.url);
+        }).catch(() => {});
+      }
     } catch (e) {
       entry.uploading = false;
       entry.error = true;
@@ -2611,6 +2790,524 @@ async function handlePhotoFilesSelected(fileList) {
     }
     renderFormPhotosGrid();
   }
+}
+
+// ── BULK PHOTO IMPORT (EXIF date/GPS matching) ──────────────────────────────────
+const IMPORT_STAGING_FOLDER = 'media/_import_staging';
+const PENDING_IMPORTS_KEY   = 'rtp4_pending_imports'; // localStorage, keyed by tripId
+const PHOTO_HASH_KEY        = 'rtp4_photo_hashes';    // localStorage, keyed by tripId
+
+// How likely each category is to have photos taken during it — biases matches
+// toward sightseeing/sleeping/dining stops and away from driving legs.
+const IMPORT_CATEGORY_WEIGHT = {
+  sightseeing: 1.0, sleeping: 0.95, dining: 0.9, misc: 0.8,
+  transportation: 0.7, working: 0.5, blocked: 0.3, driving: 0.4,
+};
+// How many hours around an event's start/end still count as "during" it
+const IMPORT_TIME_PAD_H = {
+  driving: 2, sleeping: 3, dining: 2, sightseeing: 3,
+  transportation: 2, working: 1, blocked: 1, misc: 2,
+};
+const IMPORT_TIME_FALLOFF_H   = 3;    // extra hours beyond the padded window before time-score hits 0
+const IMPORT_CONFIDENT_SCORE  = 0.6;  // min combined score to auto-commit without asking
+const IMPORT_CONFIDENT_MARGIN = 0.15; // min lead over the 2nd-best event to count as "confident"
+const IMPORT_UNMATCHED_SCORE  = 0.25; // below this against every event = no real match at all
+
+let importPendingByTrip   = {}; // { [tripId]: [ {id,url,filename,previewDataUrl,takenAt,lat,lon,dateSource,hash,status,matches,committedEventId} ] }
+let photoHashRegistry     = {}; // { [tripId]: { [sha256hex]: finalUrl } } — for duplicate detection
+let importActiveTripId    = null;
+let importBusy            = false;
+let importLastSkippedCount = 0;
+let pendingPhotoForNewEvent = null; // { entryId, tripId } while the "new event from photo" form is open
+
+function loadPendingImports() {
+  try { importPendingByTrip = JSON.parse(localStorage.getItem(PENDING_IMPORTS_KEY) || '{}'); }
+  catch { importPendingByTrip = {}; }
+}
+function loadPhotoHashRegistry() {
+  try { photoHashRegistry = JSON.parse(localStorage.getItem(PHOTO_HASH_KEY) || '{}'); }
+  catch { photoHashRegistry = {}; }
+}
+function savePhotoHashRegistry() { localStorage.setItem(PHOTO_HASH_KEY, JSON.stringify(photoHashRegistry)); }
+function recordPhotoHash(tripId, hash, url) {
+  if (!hash) return;
+  if (!photoHashRegistry[tripId]) photoHashRegistry[tripId] = {};
+  photoHashRegistry[tripId][hash] = url;
+  savePhotoHashRegistry();
+}
+function findPhotoHashUrl(tripId, hash) {
+  return hash ? (photoHashRegistry[tripId] || {})[hash] : null;
+}
+function getPendingList(tripId) {
+  return importPendingByTrip[tripId] || (importPendingByTrip[tripId] = []);
+}
+function persistPendingImports(tripId) {
+  localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(importPendingByTrip));
+  updateImportBadge();
+  mirrorPendingManifest(tripId);
+}
+
+loadPendingImports();
+loadPhotoHashRegistry();
+
+// Content hash (SHA-256 of the original file bytes) — used to recognize a photo
+// that's already been uploaded/attached even if it's re-selected from the camera
+// roll in a later import batch.
+async function sha256HexOfFile(file) {
+  try {
+    const buf = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    console.warn('[photo hash]', e);
+    return null;
+  }
+}
+
+// Pull DateTimeOriginal + GPS out of a photo's EXIF data (via the exifr CDN library).
+// Falls back to the file's own last-modified time (much less reliable — e.g. it
+// reflects when a photo was saved/transferred, not necessarily taken) if no EXIF date
+// is present at all.
+async function extractPhotoMeta(file) {
+  let takenAt = null, lat = null, lon = null, dateSource = 'none';
+  try {
+    if (window.exifr) {
+      const tags = await exifr.parse(file, { gps: true, pick: ['DateTimeOriginal', 'CreateDate', 'ModifyDate', 'latitude', 'longitude'] });
+      if (tags) {
+        const d = tags.DateTimeOriginal || tags.CreateDate || tags.ModifyDate;
+        if (d instanceof Date && !isNaN(d)) { takenAt = d.getTime(); dateSource = 'exif'; }
+        if (typeof tags.latitude === 'number')  lat = tags.latitude;
+        if (typeof tags.longitude === 'number') lon = tags.longitude;
+      }
+    }
+  } catch (e) { console.warn('[exif parse]', file.name, e); }
+  if (takenAt == null && file.lastModified) { takenAt = file.lastModified; dateSource = 'file'; }
+  return { takenAt, lat, lon, dateSource };
+}
+
+function distanceMiles(lat1, lon1, lat2, lon2) {
+  const R = 3958.8, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Best-effort coordinate for an event, reusing the same geocode cache the maps use.
+// Sleeping/dining/sightseeing events geocode their own address; driving legs use the
+// midpoint of departure/arrival; everything else (working/transportation/blocked/misc)
+// has no address field, so location can't be scored for it (time+category still can).
+async function getEventCoord(ev) {
+  if (ev.category === 'driving') {
+    const coords = [];
+    for (const addr of [ev.departure, ev.arrival]) {
+      if (!addr) continue;
+      if (!_geoCache[addr]) {
+        try { _geoCache[addr] = await geocode(addr); } catch { _geoCache[addr] = null; }
+        _saveGeoCache();
+      }
+      if (_geoCache[addr]) coords.push(_geoCache[addr]);
+    }
+    if (coords.length === 2) return { lat: (coords[0].lat + coords[1].lat) / 2, lon: (coords[0].lon + coords[1].lon) / 2 };
+    return coords[0] || null;
+  }
+  const addr = ev.category === 'sleeping' ? ev.sleepingAddress
+             : ev.category === 'dining' ? ev.diningAddress
+             : ev.category === 'sightseeing' ? ev.sightseeingAddress
+             : null;
+  if (!addr) return null;
+  if (!_geoCache[addr]) {
+    try { _geoCache[addr] = await geocode(addr); } catch { _geoCache[addr] = null; }
+    _saveGeoCache();
+  }
+  return _geoCache[addr] || null;
+}
+// Pre-warm coordinates for every event in a trip once per import session, so scoring
+// each photo afterward is instant instead of geocoding on the fly one at a time.
+async function warmEventCoordsForImport(tripEvs) {
+  for (const ev of tripEvs) { try { await getEventCoord(ev); } catch (_) {} }
+}
+
+function timeScoreForEvent(takenAt, ev) {
+  const pad = (IMPORT_TIME_PAD_H[ev.category] ?? 2) * 3600000;
+  const start = ev.start.getTime() - pad, end = ev.end.getTime() + pad;
+  if (takenAt >= start && takenAt <= end) return 1;
+  const outsideMs = takenAt < start ? (start - takenAt) : (takenAt - end);
+  return Math.max(0, 1 - outsideMs / (IMPORT_TIME_FALLOFF_H * 3600000));
+}
+function locationScoreForCoord(lat, lon, coord) {
+  if (coord == null || lat == null || lon == null) return 0.6; // neutral — lean on time+category instead
+  const d = distanceMiles(lat, lon, coord.lat, coord.lon);
+  if (d <= 0.5) return 1;
+  if (d >= 10) return 0;
+  return 1 - (d - 0.5) / 9.5;
+}
+
+// Score one photo against every event in the trip; returns candidates sorted best-first.
+async function scorePhotoAgainstEvents(meta, tripEvs) {
+  const results = [];
+  for (const ev of tripEvs) {
+    const timeScore = meta.takenAt != null ? timeScoreForEvent(meta.takenAt, ev) : 0.5;
+    const coord = await getEventCoord(ev);
+    const locScore = locationScoreForCoord(meta.lat, meta.lon, coord);
+    const weight = IMPORT_CATEGORY_WEIGHT[ev.category] ?? 0.6;
+    results.push({ eventId: ev.id, score: (timeScore * 0.6 + locScore * 0.4) * weight });
+  }
+  results.sort((a, b) => b.score - a.score);
+  return results;
+}
+function classifyMatches(ranked) {
+  if (!ranked.length || ranked[0].score < IMPORT_UNMATCHED_SCORE) return { status: 'unmatched', matches: ranked.slice(0, 3) };
+  const margin = ranked[1] ? ranked[0].score - ranked[1].score : 1;
+  if (ranked[0].score >= IMPORT_CONFIDENT_SCORE && margin >= IMPORT_CONFIDENT_MARGIN) {
+    return { status: 'confident', matches: ranked.slice(0, 3) };
+  }
+  return { status: 'ambiguous', matches: ranked.slice(0, 3) };
+}
+
+// Move a pending photo from staging into its event's photo list for good.
+async function commitPendingPhoto(entry, ev, tripId, list) {
+  const finalUrl = await ghCommitStagedPhoto(entry.url, entry.filename);
+  ev.photos = [...(ev.photos || []), finalUrl];
+  recordPhotoHash(tripId, entry.hash, finalUrl);
+  const idx = list.findIndex(p => p.id === entry.id);
+  if (idx !== -1) list.splice(idx, 1);
+  entry.status = 'committed';
+  entry.committedEventId = ev.id;
+}
+
+// Mirror the pending-import queue to GitHub as a small JSON file, so an unfinished
+// review can be picked back up from another device/browser — the queue being empty
+// is exactly the "review complete" signal. Best-effort; local-only is fine if sync
+// isn't configured.
+function pendingManifestFilename(trip) {
+  return ghTripFilename(trip).replace(/\.csv$/, '') + '_pending_photos.json';
+}
+async function mirrorPendingManifest(tripId) {
+  try {
+    const cfg = ghConfig();
+    if (!cfg.token || !cfg.repo || !cfg.repo.includes('/')) return;
+    const trip = trips.find(t => t.id === tripId);
+    if (!trip) return;
+    const [owner, repo] = cfg.repo.split('/');
+    const path = `data/${pendingManifestFilename(trip)}`;
+    const list = getPendingList(tripId);
+    const existing = await ghApi('GET', path, null, cfg.token, owner, repo).catch(() => null);
+    if (!list.length) {
+      if (existing) await ghApi('DELETE', path, { message: 'Clear pending photo import queue', sha: existing.sha }, cfg.token, owner, repo).catch(() => {});
+      return;
+    }
+    const body = { message: `Update pending photo import queue (${list.length})`, content: ghEncode(JSON.stringify(list)) };
+    if (existing) body.sha = existing.sha;
+    await ghApi('PUT', path, body, cfg.token, owner, repo).catch(() => {});
+  } catch (e) { console.warn('[pending import mirror]', e); }
+}
+async function tryResumeFromRemoteManifest(tripId) {
+  try {
+    const cfg = ghConfig();
+    if (!cfg.token || !cfg.repo || !cfg.repo.includes('/')) return false;
+    const trip = trips.find(t => t.id === tripId);
+    if (!trip) return false;
+    const [owner, repo] = cfg.repo.split('/');
+    const existing = await ghApi('GET', `data/${pendingManifestFilename(trip)}`, null, cfg.token, owner, repo);
+    if (!existing) return false;
+    const list = JSON.parse(ghDecode(existing.content));
+    if (Array.isArray(list) && list.length) {
+      importPendingByTrip[tripId] = list;
+      localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(importPendingByTrip));
+      return true;
+    }
+    return false;
+  } catch (e) { console.warn('[pending import resume]', e); return false; }
+}
+
+// Wipe out a trip's whole pending-import queue (used when the trip itself is deleted)
+function discardAllPendingImports(tripId) {
+  const list = importPendingByTrip[tripId];
+  if (list && list.length) list.forEach(p => { if (p.url) ghDiscardStagedPhoto(p.url); });
+  delete importPendingByTrip[tripId];
+  delete photoHashRegistry[tripId];
+  localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(importPendingByTrip));
+  savePhotoHashRegistry();
+  mirrorPendingManifest(tripId);
+  updateImportBadge();
+}
+
+function updateImportBadge() {
+  const badge = document.getElementById('tviz-import-badge');
+  if (!badge) return;
+  const list = tvizCurrentTripId != null ? getPendingList(tvizCurrentTripId) : [];
+  const n = list.filter(p => p.status !== 'processing').length;
+  badge.textContent = n;
+  badge.style.display = n > 0 ? '' : 'none';
+}
+
+// ── Import modal ──────────────────────────────────────────────────────────────
+function openImportModal(tripId) {
+  if (tripId == null) return;
+  importActiveTripId = tripId;
+  document.getElementById('import-overlay').classList.add('open');
+  const list = getPendingList(tripId);
+  renderImportModal();
+  if (!list.length) {
+    tryResumeFromRemoteManifest(tripId).then(found => { if (found) renderImportModal(); });
+  }
+}
+function closeImportModal() {
+  document.getElementById('import-overlay').classList.remove('open');
+}
+
+async function handleImportFilesSelected(fileList) {
+  const files = Array.from(fileList || []);
+  document.getElementById('import-file-input').value = '';
+  if (!files.length || !importActiveTripId) return;
+  const tripId = importActiveTripId;
+  const trip = trips.find(t => t.id === tripId);
+  if (!trip) return;
+  const tripEvs = events.filter(e => e.tripId === tripId);
+  const tripSlug = ghSanitize(trip.name);
+  const list = getPendingList(tripId);
+
+  importBusy = true;
+  importLastSkippedCount = 0;
+  renderImportModal();
+  await warmEventCoordsForImport(tripEvs);
+
+  const committedCounts = new Map(); // eventId -> photo count already used, seeded lazily
+  const countFor = ev => {
+    if (!committedCounts.has(ev.id)) committedCounts.set(ev.id, (ev.photos || []).length);
+    return committedCounts.get(ev.id);
+  };
+  let skipped = 0, anyCommitted = false;
+
+  for (const file of files) {
+    const hash = await sha256HexOfFile(file);
+    if (findPhotoHashUrl(tripId, hash) || list.some(p => p.hash === hash)) { skipped++; continue; }
+
+    const entry = {
+      id: `imp-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      filename: null, url: null, previewDataUrl: null,
+      takenAt: null, lat: null, lon: null, dateSource: 'none', hash,
+      status: 'processing', matches: [],
+    };
+    list.push(entry);
+    persistPendingImports(tripId);
+    renderImportModal();
+
+    try {
+      const meta = await extractPhotoMeta(file);
+      Object.assign(entry, meta);
+      const dataUrl = await resizeImageFile(file);
+      entry.previewDataUrl = dataUrl;
+      renderImportModal();
+      const base64 = dataUrl.split(',')[1];
+      const filename = `import-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.jpg`;
+      entry.filename = filename;
+      entry.url = await ghUploadImage(base64, filename, `${IMPORT_STAGING_FOLDER}/${tripSlug}`);
+      entry.previewDataUrl = null;
+
+      const ranked = await scorePhotoAgainstEvents(entry, tripEvs);
+      const { status, matches } = classifyMatches(ranked);
+      entry.matches = matches;
+
+      if (status === 'confident') {
+        const targetEv = tripEvs.find(e => e.id === matches[0].eventId);
+        if (countFor(targetEv) < PHOTO_MAX_COUNT) {
+          await commitPendingPhoto(entry, targetEv, tripId, list);
+          committedCounts.set(targetEv.id, countFor(targetEv) + 1);
+          anyCommitted = true;
+        } else {
+          entry.status = 'overflow'; // confident match, but that event's photo cap is already full
+        }
+      } else {
+        entry.status = status; // 'ambiguous' or 'unmatched'
+      }
+    } catch (e) {
+      entry.status = 'error';
+      entry.errorMsg = e.message;
+      console.error('[photo import]', e);
+    }
+    persistPendingImports(tripId);
+    renderImportModal();
+  }
+
+  importBusy = false;
+  importLastSkippedCount = skipped;
+  if (anyCommitted) {
+    save();
+    if (document.getElementById('trip-viz-overlay')?.classList.contains('open')) openTripViz(tripId);
+  }
+  renderImportModal();
+}
+
+function fmtImportDate(ts) {
+  if (!ts) return 'Unknown date';
+  return new Date(ts).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function renderImportReviewItem(p, tripEvs) {
+  const statusLabel = {
+    ambiguous: 'Multiple possible matches', unmatched: 'No confident match',
+    overflow: `Matched event already has ${PHOTO_MAX_COUNT} photos`, error: 'Something went wrong',
+  }[p.status] || p.status;
+  const suggestedIds = new Set((p.matches || []).map(m => m.eventId));
+  const suggested = (p.matches || []).map(m => tripEvs.find(e => e.id === m.eventId)).filter(Boolean);
+  const others = tripEvs.filter(e => !suggestedIds.has(e.id));
+  let dateLabel = 'No date info';
+  if (p.dateSource === 'exif') dateLabel = fmtImportDate(p.takenAt);
+  else if (p.dateSource === 'file') dateLabel = fmtImportDate(p.takenAt) + ' (file date, no EXIF)';
+  const gpsLabel = p.lat != null ? '📍' : '';
+
+  const opt = e => `<option value="${e.id}">${esc(e.title)} (${CATS[e.category]?.emoji || ''})</option>`;
+  const options = [
+    `<option value="">Choose an event…</option>`,
+    suggested.length ? `<optgroup label="Suggested">${suggested.map(opt).join('')}</optgroup>` : '',
+    others.length ? `<optgroup label="All events">${others.map(opt).join('')}</optgroup>` : '',
+  ].join('');
+
+  return `
+    <div class="import-review-item" data-import-id="${p.id}">
+      <img class="import-thumb" src="${p.url || p.previewDataUrl || ''}" onerror="this.style.visibility='hidden'">
+      <div class="import-review-body">
+        <div class="import-review-status ${p.status}">${esc(statusLabel)}</div>
+        <div class="import-review-meta">${esc(dateLabel)} ${gpsLabel}</div>
+        <select class="import-review-select" id="import-select-${p.id}">${options}</select>
+        <div class="import-review-actions">
+          <button type="button" class="import-btn-sm primary" onclick="confirmImportAssignment('${p.id}')">Assign</button>
+          <button type="button" class="import-btn-sm" onclick="createEventFromImportPhoto('${p.id}')">New event from photo</button>
+          <button type="button" class="import-btn-sm danger" onclick="discardImportPhoto('${p.id}')">Discard</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderImportModal() {
+  const body = document.getElementById('import-body');
+  if (!body || importActiveTripId == null) return;
+  const list = getPendingList(importActiveTripId);
+  const tripEvs = events.filter(e => e.tripId === importActiveTripId).sort((a, b) => a.start - b.start);
+  const processing = list.filter(p => p.status === 'processing');
+  const needsReview = list.filter(p => ['ambiguous', 'unmatched', 'overflow', 'error'].includes(p.status));
+
+  let html = '';
+  if (!list.length && !importBusy) {
+    html = `
+      <div class="import-picker">
+        <div class="import-picker-icon">📷</div>
+        <div class="import-picker-hint">Pick a batch of photos from your camera roll — we'll match each one to the closest event by date and location, upload the confident matches automatically, and only ask you about the rest.</div>
+        <button type="button" class="import-pick-btn" onclick="document.getElementById('import-file-input').click()">Select Photos</button>
+      </div>`;
+  } else {
+    const chips = [];
+    if (importBusy && !list.length) chips.push(`<span class="import-summary-chip progress">Preparing…</span>`);
+    if (processing.length) chips.push(`<span class="import-summary-chip progress">${processing.length} processing…</span>`);
+    if (needsReview.length) chips.push(`<span class="import-summary-chip pending">${needsReview.length} need review</span>`);
+    if (importLastSkippedCount > 0) chips.push(`<span class="import-summary-chip ok">${importLastSkippedCount} duplicate${importLastSkippedCount > 1 ? 's' : ''} skipped</span>`);
+    if (!processing.length && !needsReview.length && !importBusy) chips.push(`<span class="import-summary-chip ok">All caught up ✓</span>`);
+    html += `<div class="import-summary">${chips.join('')}</div>`;
+
+    if (processing.length) {
+      html += `<div class="import-section-title">Processing</div>`;
+      html += processing.map(p => `
+        <div class="import-progress-row">
+          <img class="import-thumb" src="${p.previewDataUrl || p.url || ''}" onerror="this.style.visibility='hidden'">
+          <div class="import-review-body"><div class="import-review-meta">Uploading &amp; matching…</div></div>
+        </div>`).join('');
+    }
+    if (needsReview.length) {
+      html += `<div class="import-section-title">Needs your review</div>`;
+      html += needsReview.map(p => renderImportReviewItem(p, tripEvs)).join('');
+    }
+    if (!list.length && !importBusy) {
+      html += `<div class="import-empty-note">Nothing left to review for this trip.</div>`;
+    }
+    html += `<button type="button" class="import-add-more" onclick="document.getElementById('import-file-input').click()">+ Add more photos</button>`;
+  }
+  body.innerHTML = html;
+
+  // Pre-select the top suggested match for anything that already has one
+  needsReview.forEach(p => {
+    if (p.status !== 'unmatched' && p.matches && p.matches[0]) {
+      const sel = document.getElementById('import-select-' + p.id);
+      if (sel) sel.value = p.matches[0].eventId;
+    }
+  });
+  updateImportBadge();
+}
+
+async function confirmImportAssignment(id) {
+  const tripId = importActiveTripId;
+  const list = getPendingList(tripId);
+  const entry = list.find(p => p.id === id);
+  if (!entry) return;
+  const sel = document.getElementById('import-select-' + id);
+  const eventId = sel && sel.value ? parseInt(sel.value) : null;
+  if (!eventId) { alert('Choose an event first.'); return; }
+  const ev = events.find(e => e.id === eventId);
+  if (!ev) return;
+  if ((ev.photos || []).length >= PHOTO_MAX_COUNT) {
+    if (!confirm(`"${ev.title}" already has ${PHOTO_MAX_COUNT} photos (the limit). You'll want to remove one later from the event's edit form. Add this one anyway?`)) return;
+  }
+  entry.status = 'committing';
+  renderImportModal();
+  try {
+    await commitPendingPhoto(entry, ev, tripId, list);
+    save();
+    if (document.getElementById('trip-viz-overlay')?.classList.contains('open')) openTripViz(tripId);
+  } catch (e) {
+    entry.status = 'error';
+    entry.errorMsg = e.message;
+    alert('Failed to assign photo: ' + e.message);
+  }
+  persistPendingImports(tripId);
+  renderImportModal();
+}
+
+function discardImportPhoto(id) {
+  const tripId = importActiveTripId;
+  const list = getPendingList(tripId);
+  const idx = list.findIndex(p => p.id === id);
+  if (idx === -1) return;
+  const [entry] = list.splice(idx, 1);
+  persistPendingImports(tripId);
+  renderImportModal();
+  if (entry.url) ghDiscardStagedPhoto(entry.url); // fire-and-forget
+}
+
+function createEventFromImportPhoto(id) {
+  const tripId = importActiveTripId;
+  const list = getPendingList(tripId);
+  const entry = list.find(p => p.id === id);
+  if (!entry) return;
+  pendingPhotoForNewEvent = { entryId: id, tripId };
+  const dateGuess = entry.takenAt ? new Date(entry.takenAt) : new Date();
+  closeImportModal();
+  openForm(null, dateGuess, tripId);
+  document.getElementById('f-cat').value = 'sightseeing';
+  onCatChange();
+  if (entry.lat != null && entry.lon != null) {
+    reverseGeocode(entry.lat, entry.lon).then(addr => {
+      if (addr && pendingPhotoForNewEvent && pendingPhotoForNewEvent.entryId === id) {
+        const field = document.getElementById('f-sightseeing-addr');
+        if (field && !field.value) { field.value = addr; updateSightseeingLink(); }
+      }
+    }).catch(() => {});
+  }
+}
+
+async function finalizePendingPhotoForNewEvent(savedEv, pending) {
+  if (!pending) return;
+  const list = getPendingList(pending.tripId);
+  const entry = list.find(p => p.id === pending.entryId);
+  if (!entry) { openImportModal(pending.tripId); return; }
+  try {
+    await commitPendingPhoto(entry, savedEv, pending.tripId, list);
+    save(); render();
+  } catch (e) {
+    console.error('[create event from photo] commit failed', e);
+    alert('Event created, but attaching the photo failed: ' + e.message);
+  }
+  persistPendingImports(pending.tripId);
+  openImportModal(pending.tripId);
 }
 
 // ── GITHUB SYNC ────────────────────────────────────────────────────────────────
@@ -3673,6 +4370,14 @@ function closeForm() {
   overlay.classList.add('closed');
   editingId = null;
   routeData = null;
+  // If this form was opened via "New event from photo" and got cancelled (not
+  // saved — submitForm() clears pendingPhotoForNewEvent itself before calling
+  // closeForm() on success), reopen the import review panel so the photo isn't lost.
+  if (pendingPhotoForNewEvent) {
+    const tripId = pendingPhotoForNewEvent.tripId;
+    pendingPhotoForNewEvent = null;
+    openImportModal(tripId);
+  }
 }
 
 function onOverlayClick(e) {
@@ -3896,6 +4601,18 @@ async function geocodePhoton(q) {
       return { lat, lon };
     }
     return null;
+  } catch (_) { return null; }
+}
+
+async function reverseGeocode(lat, lon) {
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=17`,
+      { headers: { 'Accept-Language': 'en' } }
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d && d.display_name ? d.display_name : null;
   } catch (_) { return null; }
 }
 
@@ -4189,9 +4906,14 @@ function submitForm() {
   } else {
     savedEv = { id: nextEvId++, title, category: cat, tripId, start, end, description: desc, photos, ...drivingFields, linkedNextId: null };
     events.push(savedEv);
+    // Capture + clear before closeForm() runs, since closeForm() also clears this
+    // (as the cancel-path cleanup) and would otherwise wipe it out from under us.
+    const pendingPhotoCapture = pendingPhotoForNewEvent;
+    pendingPhotoForNewEvent = null;
     closeForm(); render();
     handleChainLinks(savedEv);
     recordUndo('add', savedEv);
+    if (pendingPhotoCapture) finalizePendingPhotoForNewEvent(savedEv, pendingPhotoCapture);
     return;
   }
   closeForm(); render();
