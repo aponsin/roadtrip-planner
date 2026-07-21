@@ -2690,6 +2690,17 @@ function resizeImageFile(file, maxDim = PHOTO_MAX_DIM, quality = PHOTO_QUALITY) 
       img.onerror = () => reject(new Error('Could not decode image'));
       img.onload = () => {
         let { width, height } = img;
+        // Dimensions are known here from the image header alone — the expensive full
+        // decode only happens at drawImage below. Bail out BEFORE that for monster
+        // images (app-generated collages, mostly): decoding needs ~4 bytes/pixel of RAM
+        // no matter how small the file is on disk, and blowing past what the phone can
+        // give hangs or memory-kills the tab — which, mid-import, takes the whole rest
+        // of the batch down with it.
+        const mp = (width * height) / 1e6;
+        if (mp > IMPORT_MAX_MEGAPIXELS) {
+          reject(new Error(`This image is ${Math.round(mp)} megapixels (${width}×${height}) — too large to safely resize in the browser (limit ${IMPORT_MAX_MEGAPIXELS}MP). Collage-app exports are the usual culprits; try exporting it at a smaller size.`));
+          return;
+        }
         if (width > maxDim || height > maxDim) {
           if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
           else { width = Math.round(width * maxDim / height); height = maxDim; }
@@ -2972,6 +2983,14 @@ const IMPORT_SMALL_FILE_BYTES = 400 * 1024; // below this, a photo is suspicious
                                              // reflects when it was received rather than when it was taken
 const IMPORT_MAX_BATCH        = 50;   // max photos per import batch — large batches can stall on iPhone
                                        // while iOS downloads full-resolution originals from iCloud one at a time
+const IMPORT_MAX_FILE_BYTES   = 80 * 1048576; // sanity cap on raw file size (80MB) — beyond this even reading
+                                               // the bytes for hashing risks an out-of-memory tab kill on mobile
+const IMPORT_MAX_MEGAPIXELS   = 80;   // cap on image DIMENSIONS, the real memory killer: decoding needs ~4
+                                       // bytes per pixel of RAM regardless of file size on disk, so an
+                                       // app-generated collage that's only 4-5MB as a JPEG can still be
+                                       // 80-100+ megapixels (~400MB+ decoded) and hang or memory-kill the
+                                       // tab on iPhone mid-batch. iPhone panoramas top out around 63MP, so
+                                       // 80 leaves legitimate photos alone while rejecting monster collages.
 const IMPORT_FILE_TIMEOUT_MS  = 30000; // ceiling for EACH individual step (hash/EXIF/resize/upload) — if a
                                         // single step hangs (e.g. a slow iCloud download), fail fast and move
                                         // on instead of freezing the rest of the batch indefinitely. Note:
@@ -3014,7 +3033,18 @@ function withTimeout(promise, ms, label) {
 function loadPendingImports() {
   try { importPendingByTrip = JSON.parse(localStorage.getItem(PENDING_IMPORTS_KEY) || '{}'); }
   catch { importPendingByTrip = {}; }
+  // One-time repair for storage bloated by older versions that persisted previewDataUrl
+  // (full base64 photos) into localStorage — the source of quota-exceeded errors that
+  // killed import batches at their very first persist. Stripping on load both fixes the
+  // in-memory copy and (via the sweep's persist below) rewrites storage back down to a
+  // sane size.
+  for (const tripId in importPendingByTrip) {
+    for (const entry of importPendingByTrip[tripId]) {
+      if (entry.previewDataUrl) entry.previewDataUrl = null;
+    }
+  }
   sweepOrphanedImportEntries();
+  persistPendingLocal();
 }
 
 // Any entry still marked "processing" (mid-upload) or "committing" (mid-save) at the
@@ -3035,7 +3065,7 @@ function sweepOrphanedImportEntries() {
       }
     }
   }
-  if (changed) localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(importPendingByTrip));
+  if (changed) persistPendingLocal();
 }
 function loadPhotoHashRegistry() {
   try { photoHashRegistry = JSON.parse(localStorage.getItem(PHOTO_HASH_KEY) || '{}'); }
@@ -3054,8 +3084,31 @@ function findPhotoHashUrl(tripId, hash) {
 function getPendingList(tripId) {
   return importPendingByTrip[tripId] || (importPendingByTrip[tripId] = []);
 }
+// previewDataUrl holds an entire resized photo as base64 (hundreds of KB per entry) and
+// must NEVER be serialized: localStorage has a hard ~5MB quota, and once accumulated
+// entries (duplicates and failed imports keep their previews in memory) pushed the JSON
+// past it, setItem started throwing synchronously — killing every new import batch at
+// its very first persist, before photo 1 was even touched. The same bloat was also being
+// PUT to GitHub as the pending manifest on every persist (several times per photo),
+// megabytes at a time. Previews are session-only eye candy; persist everything but them.
+function pendingListsWithoutPreviews() {
+  const lite = {};
+  for (const k in importPendingByTrip) {
+    lite[k] = importPendingByTrip[k].map(p => p.previewDataUrl ? { ...p, previewDataUrl: null } : p);
+  }
+  return lite;
+}
+function persistPendingLocal() {
+  try {
+    localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(pendingListsWithoutPreviews()));
+  } catch (e) {
+    // Quota exceeded even without previews (or storage unavailable) — keep the app
+    // running on the in-memory queue rather than letting the import die here.
+    console.warn('[pending import persist]', e);
+  }
+}
 function persistPendingImports(tripId) {
-  localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(importPendingByTrip));
+  persistPendingLocal();
   renderSidebar(); // keeps the per-trip "photos to review" badge live
   mirrorPendingManifest(tripId);
 }
@@ -3075,6 +3128,35 @@ async function sha256HexOfFile(file) {
     console.warn('[photo hash]', e);
     return null;
   }
+}
+
+// The exifr library normally arrives via a <script> tag at page load — a single
+// unretried request. On a connection dropping packets, that one request sometimes
+// fails, and then window.exifr is silently undefined for the entire session: every
+// photo "has no EXIF", gets a file-date fallback, and lands in the low-confidence
+// no-date section — even photos straight off the camera. This re-attempts the load
+// on demand (with retries) at import time instead of trusting page load to have
+// worked, and lets the user make an informed choice if it still can't be fetched.
+function loadScriptOnce(src, ms = 15000) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    const timer = setTimeout(() => { s.remove(); reject(new Error('script load timed out')); }, ms);
+    s.onload = () => { clearTimeout(timer); resolve(); };
+    s.onerror = () => { clearTimeout(timer); s.remove(); reject(new Error('script load failed')); };
+    s.src = src;
+    document.head.appendChild(s);
+  });
+}
+async function ensureExifr() {
+  if (window.exifr) return true;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await loadScriptOnce('https://cdn.jsdelivr.net/npm/exifr/dist/lite.umd.js');
+      if (window.exifr) return true;
+    } catch (_) {}
+    await sleep(attempt * 800);
+  }
+  return !!window.exifr;
 }
 
 // Pull DateTimeOriginal + GPS out of a photo's EXIF data (via the exifr CDN library).
@@ -3228,7 +3310,18 @@ async function commitPendingPhoto(entry, ev, tripId, list) {
 function pendingManifestFilename(trip) {
   return ghTripFilename(trip).replace(/\.csv$/, '') + '_pending_photos.json';
 }
-async function mirrorPendingManifest(tripId) {
+// Debounced: during an active batch this used to fire 2-3 times PER PHOTO, each one a
+// full GET+PUT round-trip (and a GitHub commit) — competing with the actual photo
+// uploads for a connection that may already be dropping packets. A trailing debounce
+// collapses a burst of persists into one manifest write a few seconds after things
+// settle. Trip deletion calls the immediate version directly, since the trip row (needed
+// to compute the manifest filename) is gone by the time a debounced call would run.
+const _manifestTimers = {};
+function mirrorPendingManifest(tripId) {
+  clearTimeout(_manifestTimers[tripId]);
+  _manifestTimers[tripId] = setTimeout(() => mirrorPendingManifestNow(tripId), 2500);
+}
+async function mirrorPendingManifestNow(tripId) {
   try {
     const cfg = ghConfig();
     if (!cfg.token || !cfg.repo || !cfg.repo.includes('/')) return;
@@ -3236,7 +3329,10 @@ async function mirrorPendingManifest(tripId) {
     if (!trip) return;
     const [owner, repo] = cfg.repo.split('/');
     const path = `data/${pendingManifestFilename(trip)}`;
-    const list = getPendingList(tripId);
+    // Strip previewDataUrl (see pendingListsWithoutPreviews) — with previews embedded,
+    // this manifest ballooned to multiple MB, and GitHub's Contents API can't even read
+    // files over 1MB back, which also silently broke cross-device resume.
+    const list = pendingListsWithoutPreviews()[tripId] || [];
     const existing = await ghApi('GET', path, null, cfg.token, owner, repo).catch(() => null);
     if (!list.length) {
       if (existing) await ghApi('DELETE', path, { message: 'Clear pending photo import queue', sha: existing.sha }, cfg.token, owner, repo).catch(() => {});
@@ -3259,7 +3355,7 @@ async function tryResumeFromRemoteManifest(tripId) {
     const list = JSON.parse(ghDecode(existing.content));
     if (Array.isArray(list) && list.length) {
       importPendingByTrip[tripId] = list;
-      localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(importPendingByTrip));
+      persistPendingLocal();
       return true;
     }
     return false;
@@ -3272,9 +3368,12 @@ function discardAllPendingImports(tripId) {
   if (list && list.length) list.forEach(p => { if (p.url) ghDiscardStagedPhoto(p.url); });
   delete importPendingByTrip[tripId];
   delete photoHashRegistry[tripId];
-  localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(importPendingByTrip));
+  persistPendingLocal();
   savePhotoHashRegistry();
-  mirrorPendingManifest(tripId);
+  // Immediate (not debounced) mirror: the caller is about to remove the trip from the
+  // trips array, and the debounced version wouldn't be able to find it 2.5s from now —
+  // leaving an orphaned manifest file on GitHub.
+  mirrorPendingManifestNow(tripId);
   renderSidebar();
 }
 
@@ -3326,6 +3425,21 @@ async function handleImportFilesSelected(fileList) {
   importBatchIndex = 0;
   importBatchTotal = files.length;
   renderImportModal();
+
+  // Make sure the EXIF reader is actually available before processing anything — see
+  // ensureExifr for why page load can't be trusted to have fetched it. Without this
+  // check, a failed CDN load silently mislabeled every photo in the batch as having no
+  // EXIF. If it can't be fetched even with retries, let the user decide rather than
+  // proceeding silently with degraded matching.
+  if (!(await ensureExifr())) {
+    if (!confirm("Couldn't load the photo-metadata reader (poor connection?). Without it, none of these photos will have dates or GPS for matching — they'll all land in the low-confidence \"no date info\" section. Import anyway?")) {
+      importBusy = false;
+      importBatchTotal = 0;
+      renderImportModal();
+      return;
+    }
+  }
+
   await warmEventCoordsForImport(tripEvs);
 
   // Register a placeholder for every selected file up front, before any per-file async
@@ -3366,10 +3480,22 @@ async function handleImportFilesSelected(fileList) {
     }
 
     try {
+      // App-generated collages/panoramas can be enormous (huge-dimension composites,
+      // sometimes 50MB+ PNGs). Decoding one of those for resize can hang or outright
+      // memory-kill the tab on iPhone — which takes the whole rest of the batch down
+      // with it. Better to fail this one photo fast with a clear reason.
+      if (file.size > IMPORT_MAX_FILE_BYTES) {
+        throw new Error(`This file is ${Math.round(file.size / 1048576)}MB — too large to process in the browser (limit ${Math.round(IMPORT_MAX_FILE_BYTES / 1048576)}MB). Collage/panorama exports are the usual culprits; attach a smaller export of it manually via the event form if needed.`);
+      }
       const hash = await withTimeout(sha256HexOfFile(file), IMPORT_FILE_TIMEOUT_MS, 'Reading photo');
       entry.hash = hash;
-      const committedDupUrl = findPhotoHashUrl(tripId, hash);
-      const pendingDup = list.find(p => p !== entry && p.hash === hash);
+      // hash can legitimately be null (sha256HexOfFile gives up on files it can't read
+      // into memory — e.g. an enormous app-generated collage). Duplicate detection must
+      // be skipped entirely in that case: every not-yet-processed placeholder in this
+      // batch also has hash null, so a null-to-null comparison used to falsely flag such
+      // photos as "the exact same file was also selected earlier in this batch".
+      const committedDupUrl = hash ? findPhotoHashUrl(tripId, hash) : null;
+      const pendingDup = hash ? list.find(p => p !== entry && p.hash === hash) : null;
       if (committedDupUrl || pendingDup) {
         // Don't silently drop it — surface it as a suggested discard instead, with a
         // local-only preview (no need to upload a photo we almost certainly don't want).
@@ -3539,7 +3665,9 @@ function renderImportReviewItem(p, tripEvs) {
           ${canAssign ? `<button type="button" class="${assignBtnClass}" onclick="confirmImportAssignment('${p.id}')">Assign</button>` : ''}
           <button type="button" class="${discardBtnClass}" onclick="discardImportPhoto('${p.id}')">Discard</button>
         </div>
-        <img class="import-review-photo" src="${p.url || p.previewDataUrl || ''}" onclick="openImportPhotoLightbox('${p.id}')" onerror="handleReviewPhotoError(this)" title="Click to view full-screen">
+        ${(p.url || p.previewDataUrl)
+          ? `<img class="import-review-photo" src="${p.url || p.previewDataUrl}" onclick="openImportPhotoLightbox('${p.id}')" onerror="handleReviewPhotoError(this)" title="Click to view full-screen">`
+          : `<div class="import-review-meta">No preview available for this photo (it never finished uploading).</div>`}
       </div>
     </div>`;
 }
