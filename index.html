@@ -4054,7 +4054,7 @@ async function confirmImportAssignment(id) {
   entry.status = 'committing';
   try { renderImportModal(); } catch (e0) { console.error('[photo import] render failed', e0); }
   try {
-    await withTimeout(commitPendingPhoto(entry, ev, tripId, list), IMPORT_COMMIT_TIMEOUT_MS, 'Saving photo');
+    await withTimeout(commitFinalized(commitPendingPhoto(entry, ev, tripId, list), entry, tripId), IMPORT_COMMIT_TIMEOUT_MS, 'Saving photo');
     save();
     if (document.getElementById('trip-viz-overlay')?.classList.contains('open')) openTripViz(tripId);
   } catch (e) {
@@ -4064,6 +4064,24 @@ async function confirmImportAssignment(id) {
   }
   persistPendingImports(tripId);
   try { renderImportModal(); } catch (e2) { console.error('[photo import] render failed', e2); }
+}
+
+// withTimeout abandons the WAIT, not the OPERATION — a commit that outlives the
+// "Saving…" ceiling keeps running in the write queue and can still succeed afterward
+// ("zombie commit"). Without this handler, that late success would attach the photo to
+// the event while the UI shows it as failed, with nothing persisting or re-rendering
+// the corrected state. Attaching the finalizer to the commit promise itself (rather
+// than the timed race) guarantees that whenever the commit truly lands — on time or
+// late — state is saved, persisted, and re-rendered. On the on-time path it merely
+// duplicates work the caller does anyway.
+function commitFinalized(commitPromise, entry, tripId) {
+  commitPromise.then(() => {
+    entry.errorMsg = null; // clear any stale timeout error from the abandoned wait
+    save();
+    persistPendingImports(tripId);
+    try { renderImportModal(); } catch (_) {}
+  }).catch(() => {}); // real failures are handled by the awaiting caller
+  return commitPromise;
 }
 
 function cancelReplacePicker() {
@@ -4085,7 +4103,7 @@ async function replaceEventPhoto(id, eventId, oldUrl) {
   try {
     ev.photos = (ev.photos || []).filter(u => u !== oldUrl);
     ghDeleteImage(oldUrl); // fire-and-forget cleanup of the removed photo
-    await withTimeout(commitPendingPhoto(entry, ev, tripId, list), IMPORT_COMMIT_TIMEOUT_MS, 'Saving photo');
+    await withTimeout(commitFinalized(commitPendingPhoto(entry, ev, tripId, list), entry, tripId), IMPORT_COMMIT_TIMEOUT_MS, 'Saving photo');
     save();
     if (document.getElementById('trip-viz-overlay')?.classList.contains('open')) openTripViz(tripId);
   } catch (e) {
