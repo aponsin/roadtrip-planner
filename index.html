@@ -227,6 +227,15 @@ body {
   object-fit: contain; border-radius: 8px; margin-top: 8px;
   background: #eef2f7; cursor: zoom-in;
 }
+.import-replace-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px; margin: 8px 0;
+}
+.import-replace-thumb {
+  width: 100%; height: 72px; object-fit: cover; border-radius: 6px;
+  cursor: pointer; border: 2px solid transparent; transition: border-color .15s, opacity .15s;
+}
+.import-replace-thumb:hover { border-color: #dc2626; opacity: .85; }
 .import-review-meta { font-size: 11px; color: #64748b; margin-bottom: 4px; }
 .import-review-status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
 .import-review-status.confident { color: #16a34a; }
@@ -2687,11 +2696,49 @@ function ghParseRepoPath(url) {
   const m = url.match(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/[^/]+\/(.+)$/);
   return m ? { owner: m[1], repo: m[2], path: m[3] } : null;
 }
+
+// Both PUT and DELETE against the Contents API need the *current* sha of whatever's
+// at that path, and GitHub rejects the write outright ("is at X but expected Y") if
+// something else touched the file between our GET and our write — most likely two
+// commit attempts for the same photo overlapping (e.g. a double-tap on Assign, since
+// nothing previously stopped a second click from starting a second commit while the
+// first was still in flight). Rather than trying to prevent every possible race,
+// these wrappers just re-fetch the sha and retry a couple of times when that specific
+// error shows up, which resolves itself once the other write has landed.
+function isShaConflict(e) {
+  return /sha|does not match|409/i.test(e && e.message || '');
+}
+async function ghPutFileSafe(path, message, base64Content, token, owner, repo, attempt = 1) {
+  const existing = await ghApi('GET', path, null, token, owner, repo);
+  if (existing) {
+    // Nothing else to do if the content is already exactly what we're about to write
+    if (existing.content.replace(/\n/g, '') === base64Content) return existing;
+  }
+  const body = { message, content: base64Content };
+  if (existing) body.sha = existing.sha;
+  try {
+    return await ghApi('PUT', path, body, token, owner, repo);
+  } catch (e) {
+    if (attempt < 3 && isShaConflict(e)) return ghPutFileSafe(path, message, base64Content, token, owner, repo, attempt + 1);
+    throw e;
+  }
+}
+async function ghDeleteFileSafe(path, message, token, owner, repo, attempt = 1) {
+  const existing = await ghApi('GET', path, null, token, owner, repo);
+  if (!existing) return; // already gone — nothing to delete
+  try {
+    await ghApi('DELETE', path, { message, sha: existing.sha }, token, owner, repo);
+  } catch (e) {
+    if (attempt < 3 && isShaConflict(e)) return ghDeleteFileSafe(path, message, token, owner, repo, attempt + 1);
+    throw e;
+  }
+}
+
 // Idempotent/retry-safe: if a previous attempt got partway through (e.g. the PUT to
 // the final path succeeded but the staging DELETE failed on a flaky connection), a
 // retry must not blindly PUT again — GitHub's Contents API rejects overwriting an
-// existing file without its "sha", which is exactly the "sha wasn't supplied" error
-// this was producing. So we always check what's already there before acting.
+// existing file without its "sha". So we always check what's already there before
+// acting, and use the sha-safe helpers above in case of a concurrent commit race.
 async function ghCommitStagedPhoto(stagingUrl, finalFilename) {
   const cfg = ghConfig();
   const loc = ghParseRepoPath(stagingUrl);
@@ -2703,17 +2750,10 @@ async function ghCommitStagedPhoto(stagingUrl, finalFilename) {
   if (!existingFinal) {
     const existingStaged = await ghApi('GET', loc.path, null, cfg.token, loc.owner, loc.repo);
     if (!existingStaged) throw new Error('Staged photo no longer exists on GitHub.');
-    await ghApi('PUT', toPath, {
-      message: `Commit imported photo ${finalFilename}`,
-      content: existingStaged.content.replace(/\n/g, ''),
-    }, cfg.token, loc.owner, loc.repo);
+    await ghPutFileSafe(toPath, `Commit imported photo ${finalFilename}`, existingStaged.content.replace(/\n/g, ''), cfg.token, loc.owner, loc.repo);
   }
-  // Clean up the staging copy. Re-checking here (rather than reusing an earlier GET)
-  // means this step alone can be safely retried too.
-  const stagedNow = await ghApi('GET', loc.path, null, cfg.token, loc.owner, loc.repo);
-  if (stagedNow) {
-    await ghApi('DELETE', loc.path, { message: `Remove staged photo ${loc.path}`, sha: stagedNow.sha }, cfg.token, loc.owner, loc.repo);
-  }
+  // Clean up the staging copy — safe to retry/skip on its own if this alone fails.
+  await ghDeleteFileSafe(loc.path, `Remove staged photo ${loc.path}`, cfg.token, loc.owner, loc.repo);
   return finalUrl;
 }
 // Discard a staged photo entirely (rejected during review, or import abandoned)
@@ -2722,9 +2762,7 @@ async function ghDiscardStagedPhoto(stagingUrl) {
     const cfg = ghConfig();
     const loc = ghParseRepoPath(stagingUrl);
     if (!loc || !cfg.token) return;
-    const existing = await ghApi('GET', loc.path, null, cfg.token, loc.owner, loc.repo);
-    if (!existing) return;
-    await ghApi('DELETE', loc.path, { message: `Discard staged photo ${loc.path}`, sha: existing.sha }, cfg.token, loc.owner, loc.repo);
+    await ghDeleteFileSafe(loc.path, `Discard staged photo ${loc.path}`, cfg.token, loc.owner, loc.repo);
   } catch (e) {
     console.warn('[staged photo discard] failed for', stagingUrl, e);
   }
@@ -2738,9 +2776,7 @@ async function ghDeleteImage(url) {
     const m = url.match(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/[^/]+\/(media\/.+)$/);
     if (!m) return; // not one of our uploaded photos — leave external URLs alone
     const [, owner, repo, path] = m;
-    const existing = await ghApi('GET', path, null, cfg.token, owner, repo);
-    if (!existing) return; // already gone
-    await ghApi('DELETE', path, { message: `Delete event photo ${path}`, sha: existing.sha }, cfg.token, owner, repo);
+    await ghDeleteFileSafe(path, `Delete event photo ${path}`, cfg.token, owner, repo);
   } catch (e) {
     console.warn('[photo delete] failed for', url, e);
   }
@@ -2837,6 +2873,10 @@ const IMPORT_TIME_FALLOFF_H   = 3;    // extra hours beyond the padded window be
 const IMPORT_CONFIDENT_SCORE  = 0.6;  // min combined score to label a match "confident" (still requires user confirmation)
 const IMPORT_CONFIDENT_MARGIN = 0.15; // min lead over the 2nd-best event to count as "confident"
 const IMPORT_UNMATCHED_SCORE  = 0.25; // below this against every event = no real match at all
+const IMPORT_SMALL_FILE_BYTES = 400 * 1024; // below this, a photo is suspiciously small for a native
+                                             // camera photo — a strong sign it's a recompressed copy
+                                             // re-saved from WhatsApp/Messages/etc, whose EXIF date often
+                                             // reflects when it was received rather than when it was taken
 const IMPORT_MAX_BATCH        = 50;   // max photos per import batch — large batches can stall on iPhone
                                        // while iOS downloads full-resolution originals from iCloud one at a time
 const IMPORT_FILE_TIMEOUT_MS  = 45000; // per-photo ceiling (hash/EXIF/resize/upload combined) — if a single
@@ -2850,7 +2890,6 @@ let importBusy            = false;
 let importLastSkippedCount = 0;
 let importBatchIndex      = 0; // 1-based position of the photo currently being processed in this batch
 let importBatchTotal      = 0;
-let pendingPhotoForNewEvent = null; // { entryId, tripId } while the "new event from photo" form is open
 let importReplacePicker = null; // { entryId, eventId } while showing the "pick a photo to swap out" sub-view
 
 // Race a promise against a timeout so one hung file (e.g. a photo still downloading
@@ -3087,6 +3126,7 @@ function openImportModal(tripId) {
 }
 function closeImportModal() {
   document.getElementById('import-overlay').classList.remove('open');
+  importReplacePicker = null;
 }
 
 async function handleImportFilesSelected(fileList) {
@@ -3181,7 +3221,58 @@ function fmtImportDate(ts) {
   return new Date(ts).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+// raw.githubusercontent.com can lag a bit after a file is first uploaded — a photo
+// imported moments ago on one device may 404 for a few seconds/minutes when another
+// device resumes the review. Rather than hide the image forever on the first failure,
+// retry a few times with backoff before giving up with a clear explanation.
+function handleReviewPhotoError(imgEl) {
+  const attempt = parseInt(imgEl.dataset.retry || '0', 10) + 1;
+  imgEl.dataset.retry = attempt;
+  const delays = [1500, 3000, 6000, 10000];
+  if (attempt > delays.length) {
+    imgEl.style.display = 'none';
+    if (!imgEl.dataset.syncNoteShown) {
+      imgEl.dataset.syncNoteShown = '1';
+      const note = document.createElement('div');
+      note.className = 'import-review-meta';
+      note.textContent = "⏳ This photo hasn't finished syncing from GitHub yet — that can take a minute right after importing on another device. Reopen this panel shortly to try again.";
+      imgEl.insertAdjacentElement('afterend', note);
+    }
+    return;
+  }
+  const baseSrc = imgEl.dataset.baseSrc || imgEl.src.split('?')[0];
+  imgEl.dataset.baseSrc = baseSrc;
+  setTimeout(() => { imgEl.src = baseSrc + '?retry=' + Date.now(); }, delays[attempt - 1]);
+}
+
+// Shown instead of the normal review controls when the chosen event is already at the
+// 9-photo cap — lets the user actually see the existing photos and pick one to swap
+// out, rather than blindly confirming "add anyway" with no idea what's already there.
+function renderImportReplacePicker(p, tripEvs) {
+  const ev = tripEvs.find(e => e.id === importReplacePicker.eventId);
+  if (!ev) { importReplacePicker = null; return renderImportReviewItem(p, tripEvs); }
+  const existingPhotos = ev.photos || [];
+  return `
+    <div class="import-review-item" data-import-id="${p.id}">
+      <div class="import-review-body">
+        <div class="import-review-status ambiguous">"${esc(ev.title)}" already has ${PHOTO_MAX_COUNT} photos (the limit)</div>
+        <div class="import-review-meta">Tap one below to replace it with the new photo, or cancel to leave both untouched.</div>
+        <div class="import-replace-grid">
+          ${existingPhotos.map(url => `<img class="import-replace-thumb" src="${url}" onclick="replaceEventPhoto('${p.id}', ${ev.id}, '${url}')" onerror="this.style.display='none'" title="Replace this photo">`).join('')}
+        </div>
+        <div class="import-review-actions">
+          <button type="button" class="import-btn-sm" onclick="cancelReplacePicker()">Cancel</button>
+        </div>
+        <div class="import-review-meta" style="margin-top:8px">New photo:</div>
+        <img class="import-review-photo" src="${p.url || p.previewDataUrl || ''}" onclick="openImportPhotoLightbox('${p.id}')" onerror="handleReviewPhotoError(this)" title="Click to view full-screen">
+      </div>
+    </div>`;
+}
+
 function renderImportReviewItem(p, tripEvs) {
+  if (importReplacePicker && importReplacePicker.entryId === p.id) {
+    return renderImportReplacePicker(p, tripEvs);
+  }
   const topScore = p.matches && p.matches[0] ? Math.round(p.matches[0].score * 100) : null;
   const statusLabel = {
     confident: `Suggested match — ${topScore}% confidence`,
@@ -3217,10 +3308,9 @@ function renderImportReviewItem(p, tripEvs) {
         <select class="import-review-select" id="import-select-${p.id}">${options}</select>
         <div class="import-review-actions">
           <button type="button" class="import-btn-sm primary" onclick="confirmImportAssignment('${p.id}')">Assign</button>
-          <button type="button" class="import-btn-sm" onclick="createEventFromImportPhoto('${p.id}')">New event from photo</button>
           <button type="button" class="import-btn-sm danger" onclick="discardImportPhoto('${p.id}')">Discard</button>
         </div>
-        <img class="import-review-photo" src="${p.url || p.previewDataUrl || ''}" onclick="openImportPhotoLightbox('${p.id}')" onerror="this.style.display='none'" title="Click to view full-screen">
+        <img class="import-review-photo" src="${p.url || p.previewDataUrl || ''}" onclick="openImportPhotoLightbox('${p.id}')" onerror="handleReviewPhotoError(this)" title="Click to view full-screen">
       </div>
     </div>`;
 }
@@ -3289,14 +3379,18 @@ async function confirmImportAssignment(id) {
   const tripId = importActiveTripId;
   const list = getPendingList(tripId);
   const entry = list.find(p => p.id === id);
-  if (!entry) return;
+  if (!entry || entry.status === 'committing') return; // guards against a double-tap starting two commits at once
   const sel = document.getElementById('import-select-' + id);
   const eventId = sel && sel.value ? parseInt(sel.value) : null;
   if (!eventId) { alert('Choose an event first.'); return; }
   const ev = events.find(e => e.id === eventId);
   if (!ev) return;
   if ((ev.photos || []).length >= PHOTO_MAX_COUNT) {
-    if (!confirm(`"${ev.title}" already has ${PHOTO_MAX_COUNT} photos (the limit). You'll want to remove one later from the event's edit form. Add this one anyway?`)) return;
+    // Don't just ask "add anyway?" with no context — show the event's existing
+    // photos so the user can actually see what they'd be choosing between.
+    importReplacePicker = { entryId: id, eventId };
+    renderImportModal();
+    return;
   }
   entry.status = 'committing';
   renderImportModal();
@@ -3313,6 +3407,37 @@ async function confirmImportAssignment(id) {
   renderImportModal();
 }
 
+function cancelReplacePicker() {
+  importReplacePicker = null;
+  renderImportModal();
+}
+
+// Swap out one of an at-capacity event's existing photos for the new imported one.
+async function replaceEventPhoto(id, eventId, oldUrl) {
+  const tripId = importActiveTripId;
+  const list = getPendingList(tripId);
+  const entry = list.find(p => p.id === id);
+  if (!entry || entry.status === 'committing') return; // guards against a double-tap starting two commits at once
+  const ev = events.find(e => e.id === eventId);
+  if (!ev) return;
+  importReplacePicker = null;
+  entry.status = 'committing';
+  renderImportModal();
+  try {
+    ev.photos = (ev.photos || []).filter(u => u !== oldUrl);
+    ghDeleteImage(oldUrl); // fire-and-forget cleanup of the removed photo
+    await commitPendingPhoto(entry, ev, tripId, list);
+    save();
+    if (document.getElementById('trip-viz-overlay')?.classList.contains('open')) openTripViz(tripId);
+  } catch (e) {
+    entry.status = 'error';
+    entry.errorMsg = e.message;
+    alert('Failed to replace photo: ' + e.message);
+  }
+  persistPendingImports(tripId);
+  renderImportModal();
+}
+
 function discardImportPhoto(id) {
   const tripId = importActiveTripId;
   const list = getPendingList(tripId);
@@ -3322,43 +3447,6 @@ function discardImportPhoto(id) {
   persistPendingImports(tripId);
   renderImportModal();
   if (entry.url) ghDiscardStagedPhoto(entry.url); // fire-and-forget
-}
-
-function createEventFromImportPhoto(id) {
-  const tripId = importActiveTripId;
-  const list = getPendingList(tripId);
-  const entry = list.find(p => p.id === id);
-  if (!entry) return;
-  pendingPhotoForNewEvent = { entryId: id, tripId };
-  const dateGuess = entry.takenAt ? new Date(entry.takenAt) : new Date();
-  closeImportModal();
-  openForm(null, dateGuess, tripId);
-  document.getElementById('f-cat').value = 'sightseeing';
-  onCatChange();
-  if (entry.lat != null && entry.lon != null) {
-    reverseGeocode(entry.lat, entry.lon).then(addr => {
-      if (addr && pendingPhotoForNewEvent && pendingPhotoForNewEvent.entryId === id) {
-        const field = document.getElementById('f-sightseeing-addr');
-        if (field && !field.value) { field.value = addr; updateSightseeingLink(); }
-      }
-    }).catch(() => {});
-  }
-}
-
-async function finalizePendingPhotoForNewEvent(savedEv, pending) {
-  if (!pending) return;
-  const list = getPendingList(pending.tripId);
-  const entry = list.find(p => p.id === pending.entryId);
-  if (!entry) { openImportModal(pending.tripId); return; }
-  try {
-    await commitPendingPhoto(entry, savedEv, pending.tripId, list);
-    save(); render();
-  } catch (e) {
-    console.error('[create event from photo] commit failed', e);
-    alert('Event created, but attaching the photo failed: ' + e.message);
-  }
-  persistPendingImports(pending.tripId);
-  openImportModal(pending.tripId);
 }
 
 // ── GITHUB SYNC ────────────────────────────────────────────────────────────────
@@ -4421,14 +4509,6 @@ function closeForm() {
   overlay.classList.add('closed');
   editingId = null;
   routeData = null;
-  // If this form was opened via "New event from photo" and got cancelled (not
-  // saved — submitForm() clears pendingPhotoForNewEvent itself before calling
-  // closeForm() on success), reopen the import review panel so the photo isn't lost.
-  if (pendingPhotoForNewEvent) {
-    const tripId = pendingPhotoForNewEvent.tripId;
-    pendingPhotoForNewEvent = null;
-    openImportModal(tripId);
-  }
 }
 
 function onOverlayClick(e) {
@@ -4652,18 +4732,6 @@ async function geocodePhoton(q) {
       return { lat, lon };
     }
     return null;
-  } catch (_) { return null; }
-}
-
-async function reverseGeocode(lat, lon) {
-  try {
-    const r = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=17`,
-      { headers: { 'Accept-Language': 'en' } }
-    );
-    if (!r.ok) return null;
-    const d = await r.json();
-    return d && d.display_name ? d.display_name : null;
   } catch (_) { return null; }
 }
 
@@ -4957,14 +5025,9 @@ function submitForm() {
   } else {
     savedEv = { id: nextEvId++, title, category: cat, tripId, start, end, description: desc, photos, ...drivingFields, linkedNextId: null };
     events.push(savedEv);
-    // Capture + clear before closeForm() runs, since closeForm() also clears this
-    // (as the cancel-path cleanup) and would otherwise wipe it out from under us.
-    const pendingPhotoCapture = pendingPhotoForNewEvent;
-    pendingPhotoForNewEvent = null;
     closeForm(); render();
     handleChainLinks(savedEv);
     recordUndo('add', savedEv);
-    if (pendingPhotoCapture) finalizePendingPhotoForNewEvent(savedEv, pendingPhotoCapture);
     return;
   }
   closeForm(); render();
