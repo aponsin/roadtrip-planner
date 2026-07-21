@@ -291,6 +291,10 @@ body {
   font-size: 11px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a;
   border-radius: 6px; padding: 6px 8px; margin: 4px 0; line-height: 1.5;
 }
+.import-review-info {
+  font-size: 11px; color: #1e40af; background: #eff6ff; border: 1px solid #bfdbfe;
+  border-radius: 6px; padding: 6px 8px; margin: 4px 0; line-height: 1.5;
+}
 .import-section-title {
   font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase;
   letter-spacing: .6px; margin: 14px 0 8px;
@@ -3323,11 +3327,66 @@ async function warmEventCoordsForImport(tripEvs) {
 }
 
 function timeScoreForEvent(takenAt, ev) {
+  const s = ev.start.getTime(), e = ev.end.getTime();
+  // Strictly during the event beats merely near it: previously both scored 1.0, which
+  // is exactly why adjacent events (dinner right after sightseeing) kept coming out
+  // "ambiguous" — the true event had no way to outrank its padded neighbor.
+  if (takenAt >= s && takenAt <= e) return 1;
   const pad = (IMPORT_TIME_PAD_H[ev.category] ?? 2) * 3600000;
-  const start = ev.start.getTime() - pad, end = ev.end.getTime() + pad;
-  if (takenAt >= start && takenAt <= end) return 1;
-  const outsideMs = takenAt < start ? (start - takenAt) : (takenAt - end);
-  return Math.max(0, 1 - outsideMs / (IMPORT_TIME_FALLOFF_H * 3600000));
+  if (takenAt >= s - pad && takenAt <= e + pad) return 0.85;
+  const outsideMs = takenAt < s - pad ? (s - pad - takenAt) : (takenAt - (e + pad));
+  return Math.max(0, 0.85 * (1 - outsideMs / (IMPORT_TIME_FALLOFF_H * 3600000)));
+}
+
+// ── Out-and-back disambiguation for driving legs (#4) ─────────────────────────
+// Route-proximity alone can't tell the outbound leg from the return leg on the same
+// road. But a leg has start/end times: a photo taken 40% into the time window should
+// sit roughly 40% along the route. Penalize (never boost) when the photo's position
+// is wildly inconsistent with its time-implied progress.
+const _routeLenCache = new WeakMap(); // geometry object → { lenMi, cum: [cumulative miles per vertex] }
+function routeCumulativeMiles(geom) {
+  let cached = _routeLenCache.get(geom);
+  if (cached) return cached;
+  const coords = geom.coordinates;
+  const cum = [0];
+  for (let i = 1; i < coords.length; i++) {
+    cum.push(cum[i - 1] + distanceMiles(coords[i - 1][1], coords[i - 1][0], coords[i][1], coords[i][0]));
+  }
+  cached = { lenMi: cum[cum.length - 1], cum };
+  _routeLenCache.set(geom, cached);
+  return cached;
+}
+function pointAlongRoute(geom, frac) {
+  const { lenMi, cum } = routeCumulativeMiles(geom);
+  if (!lenMi) return null;
+  const target = Math.max(0, Math.min(1, frac)) * lenMi;
+  const coords = geom.coordinates;
+  for (let i = 1; i < coords.length; i++) {
+    if (cum[i] >= target) {
+      const segLen = cum[i] - cum[i - 1];
+      const t = segLen ? (target - cum[i - 1]) / segLen : 0;
+      return {
+        lat: coords[i - 1][1] + t * (coords[i][1] - coords[i - 1][1]),
+        lon: coords[i - 1][0] + t * (coords[i][0] - coords[i - 1][0]),
+      };
+    }
+  }
+  const last = coords[coords.length - 1];
+  return { lat: last[1], lon: last[0] };
+}
+async function drivingProgressConsistency(meta, ev) {
+  const s = ev.start.getTime(), e = ev.end.getTime();
+  if (e <= s || meta.takenAt < s || meta.takenAt > e) return 1; // only judge photos mid-leg
+  const geom = await getDrivingRouteGeometry(ev);
+  if (!geom || !geom.coordinates || geom.coordinates.length < 2) return 1;
+  const expected = pointAlongRoute(geom, (meta.takenAt - s) / (e - s));
+  if (!expected) return 1;
+  const d = distanceMiles(meta.lat, meta.lon, expected.lat, expected.lon);
+  const { lenMi } = routeCumulativeMiles(geom);
+  const tol = Math.max(10, lenMi * 0.25); // generous — meal stops and detours shift real progress a lot
+  if (d <= tol) return 1;
+  if (d >= lenMi) return 0.6;
+  return 1 - 0.4 * (d - tol) / Math.max(lenMi - tol, 1);
 }
 function locScoreFromDistance(d) {
   if (d <= 0.5) return 1;
@@ -3422,12 +3481,36 @@ function photoQualityWarning(entry) {
 // Score one photo against every event in the trip; returns candidates sorted best-first.
 async function scorePhotoAgainstEvents(meta, tripEvs) {
   const reliability = photoReliability(meta);
+  const hasGps = meta.lat != null && meta.lon != null;
+  const exifDate = meta.dateSource === 'exif';
+  const hasDate = meta.takenAt != null;
+
+  // A file-only date is usually the moment iOS transcoded/saved the file at selection
+  // time — not when the photo was taken. Trusting it absolutely let one wrong date
+  // zero out the time score for EVERY event, dooming the photo to "no match at all"
+  // by construction. Blend low-trust dates toward neutral so they nudge the ranking
+  // without being able to veto it.
+  const dateTrust = exifDate ? 1 : 0.35;
+
+  // Adaptive weights (#3): lean on whichever signal this photo actually carries.
+  // GPS when present is near-conclusive; when absent, don't let a permanently-neutral
+  // location score dilute a solid EXIF timestamp.
+  let wT, wL;
+  if (hasGps && exifDate)      { wT = 0.45; wL = 0.55; }
+  else if (hasGps)             { wT = 0.25; wL = 0.75; }
+  else if (exifDate)           { wT = 0.85; wL = 0.15; }
+  else                         { wT = 0.60; wL = 0.40; }
+
   const results = [];
   for (const ev of tripEvs) {
-    const timeScore = meta.takenAt != null ? timeScoreForEvent(meta.takenAt, ev) : 0.5;
-    const locScore = await locationScoreForEvent(meta, ev);
+    const rawTime = hasDate ? timeScoreForEvent(meta.takenAt, ev) : 0.5;
+    const timeScore = hasDate ? dateTrust * rawTime + (1 - dateTrust) * 0.5 : 0.5;
+    let locScore = await locationScoreForEvent(meta, ev);
+    if (ev.category === 'driving' && hasGps && exifDate) {
+      locScore *= await drivingProgressConsistency(meta, ev); // out-and-back tiebreaker (#4)
+    }
     const weight = IMPORT_CATEGORY_WEIGHT[ev.category] ?? 0.6;
-    results.push({ eventId: ev.id, score: (timeScore * 0.6 + locScore * 0.4) * weight * reliability });
+    results.push({ eventId: ev.id, score: (timeScore * wT + Math.min(locScore, 1) * wL) * weight * reliability });
   }
   results.sort((a, b) => b.score - a.score);
   return results;
@@ -3439,6 +3522,46 @@ function classifyMatches(ranked) {
     return { status: 'confident', matches: ranked.slice(0, 3) };
   }
   return { status: 'ambiguous', matches: ranked.slice(0, 3) };
+}
+
+// ── Neighbor voting (#2) ──────────────────────────────────────────────────────
+// Photos taken within minutes of each other almost always belong to the same event —
+// a burst of 10 shots at a viewpoint shouldn't come out as 3 confident + 7 ambiguous.
+// Cluster the queue by EXIF-timestamp gaps; when a cluster's confident members all
+// agree on one event, promote its weaker members one rung (ambiguous → confident,
+// unmatched → ambiguous) IF that event is already among their own top candidates —
+// neighbors strengthen an existing hypothesis, they never invent one.
+const IMPORT_CLUSTER_GAP_MIN = 15;
+function applyNeighborVoting(list) {
+  const dated = list
+    .filter(p => p.dateSource === 'exif' && p.takenAt != null && ['confident', 'ambiguous', 'unmatched'].includes(p.status))
+    .sort((a, b) => a.takenAt - b.takenAt);
+  let changed = false;
+  let cluster = [];
+  const flush = () => {
+    if (cluster.length >= 2) {
+      const confident = cluster.filter(p => p.status === 'confident');
+      const evId = confident.length ? confident[0].matches[0]?.eventId : null;
+      if (evId != null && confident.every(p => p.matches[0]?.eventId === evId)) {
+        for (const p of cluster) {
+          if (p.status === 'confident') continue;
+          const m = (p.matches || []).find(x => x.eventId === evId);
+          if (!m) continue; // the cluster's event isn't even a candidate for this photo — don't force it
+          p.matches = [m, ...p.matches.filter(x => x !== m)];
+          p.status = p.status === 'ambiguous' ? 'confident' : 'ambiguous';
+          p.neighborNote = 'Photos taken minutes apart from this one match that event.';
+          changed = true;
+        }
+      }
+    }
+    cluster = [];
+  };
+  for (const p of dated) {
+    if (cluster.length && p.takenAt - cluster[cluster.length - 1].takenAt > IMPORT_CLUSTER_GAP_MIN * 60000) flush();
+    cluster.push(p);
+  }
+  flush();
+  return changed;
 }
 
 // Move a pending photo from staging into its event's photo list for good.
@@ -3656,6 +3779,10 @@ async function handleImportFilesSelected(fileList) {
     renderImportModal();
   }
 
+  // Batch is fully scored — let clusters of near-simultaneous photos reinforce each
+  // other's suggestions before the final render.
+  if (applyNeighborVoting(list)) persistPendingImports(tripId);
+
   importBusy = false;
   importBatchIndex = 0;
   importBatchTotal = 0;
@@ -3752,6 +3879,7 @@ async function retryImportPhoto(id) {
   entry.matches = [];
   renderImportModal();
   await processImportFile(file, entry, tripId, events.filter(e => e.tripId === tripId), ghSanitize(trip.name), list);
+  applyNeighborVoting(list); // a freshly-scored photo can benefit from (or reinforce) its time-cluster
   persistPendingImports(tripId);
   renderImportModal();
 }
@@ -3898,6 +4026,7 @@ function renderImportReviewItem(p, tripEvs) {
         <div class="import-review-status ${p.status}">${esc(statusLabel)}</div>
         <div class="import-review-meta">${esc(metaBits)}</div>
         ${noteText ? `<div class="import-review-warning">⚠ ${esc(noteText)}</div>` : ''}
+        ${p.neighborNote ? `<div class="import-review-info">🤝 ${esc(p.neighborNote)}</div>` : ''}
         ${canAssign ? `<select class="import-review-select" id="import-select-${p.id}">${options}</select>` : ''}
         <div class="import-review-actions">
           ${canAssign ? `<button type="button" class="${assignBtnClass}" onclick="confirmImportAssignment('${p.id}')">Assign</button>` : ''}
@@ -4024,12 +4153,19 @@ function renderImportModal() {
     }
 
     if (processing.length) {
+      // One row for the photo actively being worked on (the only one that ever has a
+      // thumbnail anyway) + a simple counter for the rest — a wall of identical
+      // "Uploading…" placeholder rows told the user nothing extra.
+      const active = processing[0];
       html += `<div class="import-section-title">Processing</div>`;
-      html += processing.map(p => `
+      html += `
         <div class="import-progress-row">
-          <img class="import-thumb" src="${p.previewDataUrl || p.url || ''}" onerror="this.style.visibility='hidden'">
-          <div class="import-review-body"><div class="import-review-meta">Uploading &amp; matching…</div></div>
-        </div>`).join('');
+          <img class="import-thumb" src="${active.previewDataUrl || active.url || ''}" onerror="this.style.visibility='hidden'">
+          <div class="import-review-body">
+            <div class="import-review-meta">Uploading &amp; matching…</div>
+            ${processing.length > 1 ? `<div class="import-review-meta">${processing.length - 1} more photo${processing.length - 1 === 1 ? '' : 's'} waiting</div>` : ''}
+          </div>
+        </div>`;
     }
     if (committing.length) {
       html += `<div class="import-section-title">Saving…</div>`;
