@@ -241,6 +241,7 @@ body {
 .import-review-status.confident { color: #16a34a; }
 .import-review-status.ambiguous { color: #d97706; }
 .import-review-status.unmatched { color: #dc2626; }
+.import-review-status.duplicate { color: #64748b; }
 .import-review-select {
   padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 6px;
   font-size: 12px; font-family: inherit; color: #0f172a; max-width: 100%;
@@ -255,6 +256,12 @@ body {
 .import-btn-sm.primary:hover { background: #1e40af; }
 .import-btn-sm.danger { color: #dc2626; }
 .import-btn-sm.danger:hover { background: #fef2f2; }
+.import-btn-sm.danger.primary { background: #dc2626; color: #fff; border-color: #dc2626; }
+.import-btn-sm.danger.primary:hover { background: #b91c1c; }
+.import-review-warning {
+  font-size: 11px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a;
+  border-radius: 6px; padding: 6px 8px; margin: 4px 0; line-height: 1.5;
+}
 .import-section-title {
   font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase;
   letter-spacing: .6px; margin: 14px 0 8px;
@@ -2887,7 +2894,6 @@ let importPendingByTrip   = {}; // { [tripId]: [ {id,url,filename,previewDataUrl
 let photoHashRegistry     = {}; // { [tripId]: { [sha256hex]: finalUrl } } — for duplicate detection
 let importActiveTripId    = null;
 let importBusy            = false;
-let importLastSkippedCount = 0;
 let importBatchIndex      = 0; // 1-based position of the photo currently being processed in this batch
 let importBatchTotal      = 0;
 let importReplacePicker = null; // { entryId, eventId } while showing the "pick a photo to swap out" sub-view
@@ -3023,15 +3029,39 @@ function locationScoreForCoord(lat, lon, coord) {
   return 1 - (d - 0.5) / 9.5;
 }
 
+// How much to trust a photo's own EXIF metadata. Photos re-saved from WhatsApp,
+// Messages, Instagram, etc. are heavily recompressed (far smaller than a native
+// camera photo) and almost always lose their GPS data — and their surviving
+// timestamp often reflects when the file was received/re-saved rather than when
+// the photo was actually taken. When both signals line up, treat the metadata as
+// unreliable so a bad date/location can't produce a falsely "confident" match.
+function photoReliability(entry) {
+  const hasGps = entry.lat != null && entry.lon != null;
+  if (hasGps) return 1;
+  const isSmallFile = entry.fileSize != null && entry.fileSize < IMPORT_SMALL_FILE_BYTES;
+  return isSmallFile ? 0.45 : 0.8;
+}
+
+// Surfaced in the review UI so the user knows *why* a photo scored low — and gives
+// them a concrete reason to consider discarding it instead of assigning it blind.
+function photoQualityWarning(entry) {
+  const hasGps = entry.lat != null && entry.lon != null;
+  const isSmallFile = entry.fileSize != null && entry.fileSize < IMPORT_SMALL_FILE_BYTES;
+  if (hasGps || !isSmallFile) return null; // only warn when both signals line up together
+  const kb = Math.round(entry.fileSize / 1024);
+  return `Possibly a re-shared copy (e.g. from WhatsApp or Messages) — no GPS data and only ${kb}KB, much smaller than a native camera photo. Its date may not reflect when it was actually taken.`;
+}
+
 // Score one photo against every event in the trip; returns candidates sorted best-first.
 async function scorePhotoAgainstEvents(meta, tripEvs) {
+  const reliability = photoReliability(meta);
   const results = [];
   for (const ev of tripEvs) {
     const timeScore = meta.takenAt != null ? timeScoreForEvent(meta.takenAt, ev) : 0.5;
     const coord = await getEventCoord(ev);
     const locScore = locationScoreForCoord(meta.lat, meta.lon, coord);
     const weight = IMPORT_CATEGORY_WEIGHT[ev.category] ?? 0.6;
-    results.push({ eventId: ev.id, score: (timeScore * 0.6 + locScore * 0.4) * weight });
+    results.push({ eventId: ev.id, score: (timeScore * 0.6 + locScore * 0.4) * weight * reliability });
   }
   results.sort((a, b) => b.score - a.score);
   return results;
@@ -3047,7 +3077,10 @@ function classifyMatches(ranked) {
 
 // Move a pending photo from staging into its event's photo list for good.
 async function commitPendingPhoto(entry, ev, tripId, list) {
-  const finalUrl = await ghCommitStagedPhoto(entry.url, entry.filename);
+  // A confirmed duplicate was never uploaded to staging (nothing to move) — just
+  // reuse the already-attached photo's URL instead of trying to move a file that
+  // doesn't exist.
+  const finalUrl = entry.duplicateOfUrl || await ghCommitStagedPhoto(entry.url, entry.filename);
   ev.photos = [...(ev.photos || []), finalUrl];
   recordPhotoHash(tripId, entry.hash, finalUrl);
   const idx = list.findIndex(p => p.id === entry.id);
@@ -3147,13 +3180,10 @@ async function handleImportFilesSelected(fileList) {
   const list = getPendingList(tripId);
 
   importBusy = true;
-  importLastSkippedCount = 0;
   importBatchIndex = 0;
   importBatchTotal = files.length;
   renderImportModal();
   await warmEventCoordsForImport(tripEvs);
-
-  let skipped = 0;
 
   for (const file of files) {
     importBatchIndex++;
@@ -3165,6 +3195,7 @@ async function handleImportFilesSelected(fileList) {
       id: `imp-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
       filename: null, url: null, previewDataUrl: null,
       takenAt: null, lat: null, lon: null, dateSource: 'none', hash: null,
+      fileSize: file.size, duplicateNote: null, duplicateOfUrl: null,
       status: 'processing', matches: [],
     };
     list.push(entry);
@@ -3174,10 +3205,17 @@ async function handleImportFilesSelected(fileList) {
     try {
       const hash = await withTimeout(sha256HexOfFile(file), IMPORT_FILE_TIMEOUT_MS, 'Reading photo');
       entry.hash = hash;
-      if (findPhotoHashUrl(tripId, hash) || list.some(p => p !== entry && p.hash === hash)) {
-        skipped++;
-        const idx = list.indexOf(entry);
-        if (idx !== -1) list.splice(idx, 1);
+      const committedDupUrl = findPhotoHashUrl(tripId, hash);
+      const pendingDup = list.find(p => p !== entry && p.hash === hash);
+      if (committedDupUrl || pendingDup) {
+        // Don't silently drop it — surface it as a suggested discard instead, with a
+        // local-only preview (no need to upload a photo we almost certainly don't want).
+        try { entry.previewDataUrl = await withTimeout(resizeImageFile(file), IMPORT_FILE_TIMEOUT_MS, 'Resizing photo'); } catch (_) {}
+        entry.duplicateNote = committedDupUrl
+          ? 'The exact same file is already attached to an event in this trip.'
+          : 'The exact same file was also selected earlier in this batch.';
+        entry.duplicateOfUrl = committedDupUrl || null;
+        entry.status = 'duplicate';
         persistPendingImports(tripId);
         renderImportModal();
         continue;
@@ -3212,7 +3250,6 @@ async function handleImportFilesSelected(fileList) {
   importBusy = false;
   importBatchIndex = 0;
   importBatchTotal = 0;
-  importLastSkippedCount = skipped;
   renderImportModal();
 }
 
@@ -3278,6 +3315,7 @@ function renderImportReviewItem(p, tripEvs) {
     confident: `Suggested match — ${topScore}% confidence`,
     ambiguous: `Multiple possible matches — best is ${topScore}% confidence`,
     unmatched: 'No confident match',
+    duplicate: 'Likely duplicate — discard suggested',
     error: p.errorMsg || 'Something went wrong',
   }[p.status] || p.status;
   const suggestedIds = new Set((p.matches || []).map(m => m.eventId));
@@ -3287,7 +3325,12 @@ function renderImportReviewItem(p, tripEvs) {
   let dateLabel = 'No date info';
   if (p.dateSource === 'exif') dateLabel = fmtImportDate(p.takenAt);
   else if (p.dateSource === 'file') dateLabel = fmtImportDate(p.takenAt) + ' (file date, no EXIF)';
-  const gpsLabel = p.lat != null ? '📍' : '';
+  const gpsLabel = p.lat != null ? '📍 has GPS' : '';
+  const sizeLabel = p.fileSize != null ? `${Math.round(p.fileSize / 1024)}KB` : '';
+  const metaBits = [dateLabel, gpsLabel, sizeLabel].filter(Boolean).join(' · ');
+
+  const qualityWarning = p.status !== 'duplicate' ? photoQualityWarning(p) : null;
+  const noteText = p.status === 'duplicate' ? p.duplicateNote : qualityWarning;
 
   const opt = e => {
     const s = scoreByEventId.get(e.id);
@@ -3300,15 +3343,22 @@ function renderImportReviewItem(p, tripEvs) {
     others.length ? `<optgroup label="All events">${others.map(opt).join('')}</optgroup>` : '',
   ].join('');
 
+  const assignBtnClass = p.status === 'duplicate' ? 'import-btn-sm' : 'import-btn-sm primary';
+  const discardBtnClass = p.status === 'duplicate' ? 'import-btn-sm danger primary' : 'import-btn-sm danger';
+  // An in-batch duplicate (not yet attached anywhere) was never uploaded, so there's
+  // nothing to assign yet — only the earlier copy in this same batch can be kept.
+  const canAssign = p.status !== 'duplicate' || p.duplicateOfUrl;
+
   return `
     <div class="import-review-item" data-import-id="${p.id}">
       <div class="import-review-body">
         <div class="import-review-status ${p.status}">${esc(statusLabel)}</div>
-        <div class="import-review-meta">${esc(dateLabel)} ${gpsLabel}</div>
-        <select class="import-review-select" id="import-select-${p.id}">${options}</select>
+        <div class="import-review-meta">${esc(metaBits)}</div>
+        ${noteText ? `<div class="import-review-warning">⚠ ${esc(noteText)}</div>` : ''}
+        ${canAssign ? `<select class="import-review-select" id="import-select-${p.id}">${options}</select>` : ''}
         <div class="import-review-actions">
-          <button type="button" class="import-btn-sm primary" onclick="confirmImportAssignment('${p.id}')">Assign</button>
-          <button type="button" class="import-btn-sm danger" onclick="discardImportPhoto('${p.id}')">Discard</button>
+          ${canAssign ? `<button type="button" class="${assignBtnClass}" onclick="confirmImportAssignment('${p.id}')">Assign</button>` : ''}
+          <button type="button" class="${discardBtnClass}" onclick="discardImportPhoto('${p.id}')">Discard</button>
         </div>
         <img class="import-review-photo" src="${p.url || p.previewDataUrl || ''}" onclick="openImportPhotoLightbox('${p.id}')" onerror="handleReviewPhotoError(this)" title="Click to view full-screen">
       </div>
@@ -3323,7 +3373,8 @@ function renderImportModal() {
   const processing = list.filter(p => p.status === 'processing');
   const suggested = list.filter(p => p.status === 'confident');
   const needsReview = list.filter(p => ['ambiguous', 'unmatched', 'error'].includes(p.status));
-  const reviewTotal = suggested.length + needsReview.length;
+  const duplicates = list.filter(p => p.status === 'duplicate');
+  const reviewTotal = suggested.length + needsReview.length + duplicates.length;
 
   let html = '';
   if (!list.length && !importBusy) {
@@ -3339,7 +3390,6 @@ function renderImportModal() {
     if (importBusy && importBatchTotal > 0) chips.push(`<span class="import-summary-chip progress">Photo ${Math.min(importBatchIndex, importBatchTotal)} of ${importBatchTotal}</span>`);
     else if (processing.length) chips.push(`<span class="import-summary-chip progress">${processing.length} processing…</span>`);
     if (reviewTotal) chips.push(`<span class="import-summary-chip pending">${reviewTotal} to review</span>`);
-    if (importLastSkippedCount > 0) chips.push(`<span class="import-summary-chip ok">${importLastSkippedCount} duplicate${importLastSkippedCount > 1 ? 's' : ''} skipped</span>`);
     if (!processing.length && !reviewTotal && !importBusy) chips.push(`<span class="import-summary-chip ok">All caught up ✓</span>`);
     html += `<div class="import-summary">${chips.join('')}</div>`;
 
@@ -3358,6 +3408,10 @@ function renderImportModal() {
     if (needsReview.length) {
       html += `<div class="import-section-title">Needs a closer look</div>`;
       html += needsReview.map(p => renderImportReviewItem(p, tripEvs)).join('');
+    }
+    if (duplicates.length) {
+      html += `<div class="import-section-title">Likely duplicates — discard suggested</div>`;
+      html += duplicates.map(p => renderImportReviewItem(p, tripEvs)).join('');
     }
     if (!list.length && !importBusy) {
       html += `<div class="import-empty-note">Nothing left to review for this trip.</div>`;
