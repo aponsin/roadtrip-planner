@@ -280,6 +280,11 @@ body {
   width: 100%; margin-top: 10px;
 }
 .import-add-more:hover { background: #f8fafc; }
+.import-cleanup-link {
+  display: block; width: 100%; text-align: center; background: none; border: none;
+  cursor: pointer; font-size: 11px; color: #94a3b8; margin-top: 12px; padding: 4px;
+}
+.import-cleanup-link:hover { color: #64748b; text-decoration: underline; }
 
 /* ── GH LOAD WARNING + SLIDER ──────────── */
 #gh-load-warn { margin-top: 12px; }
@@ -2768,6 +2773,68 @@ async function ghCommitStagedPhoto(stagingUrl, finalFilename) {
   await ghDeleteFileSafe(loc.path, `Remove staged photo ${loc.path}`, cfg.token, loc.owner, loc.repo);
   return finalUrl;
 }
+// List whatever's currently sitting in a trip's staging folder on GitHub.
+// Returns [] if the folder doesn't exist yet (nothing has ever been staged) or is empty.
+async function ghListStagingFolder(tripSlug) {
+  const cfg = ghConfig();
+  if (!cfg.token || !cfg.repo || !cfg.repo.includes('/')) return null;
+  const [owner, repo] = cfg.repo.split('/');
+  const data = await ghApi('GET', `${IMPORT_STAGING_FOLDER}/${tripSlug}`, null, cfg.token, owner, repo);
+  return Array.isArray(data) ? data : [];
+}
+
+// Staged photos can end up orphaned — left in media/_import_staging/{trip}/ with no
+// matching entry in the local pending queue — if an upload finishes right as a tab is
+// closed/refreshed (before the queue is persisted with that photo's URL), if the
+// underlying network request for a "timed out" upload actually completed anyway, or from
+// reviews interrupted before this cleanup feature existed. This compares what's actually
+// sitting in the trip's staging folder against every URL the current pending queue still
+// references, and deletes anything left over that isn't.
+async function cleanupStagingLeftovers(tripId) {
+  const trip = trips.find(t => t.id === tripId);
+  if (!trip) return;
+  const cfg = ghConfig();
+  if (!cfg.token || !cfg.repo || !cfg.repo.includes('/')) {
+    alert('Configure GitHub sync first (Sync button in header).');
+    return;
+  }
+  const [owner, repo] = cfg.repo.split('/');
+  const tripSlug = ghSanitize(trip.name);
+  let files;
+  try {
+    files = await ghListStagingFolder(tripSlug);
+  } catch (e) {
+    alert('Could not check the staging folder: ' + e.message);
+    return;
+  }
+  if (!files || !files.length) {
+    alert('No staged files found for this trip on GitHub — nothing to clean up.');
+    return;
+  }
+  const referenced = new Set(
+    getPendingList(tripId)
+      .map(p => p.url && ghParseRepoPath(p.url))
+      .filter(Boolean)
+      .map(loc => loc.path)
+  );
+  const orphans = files.filter(f => !referenced.has(f.path));
+  if (!orphans.length) {
+    alert(`Checked ${files.length} staged file${files.length === 1 ? '' : 's'} — all of them are still part of your current review queue. Nothing to clean up.`);
+    return;
+  }
+  if (!confirm(`Found ${orphans.length} leftover staged photo${orphans.length === 1 ? '' : 's'} not in your review queue (most likely from an interrupted import). Delete ${orphans.length === 1 ? 'it' : 'them'} from GitHub? This can't be undone.`)) return;
+  let deleted = 0;
+  for (const f of orphans) {
+    try {
+      await ghDeleteFileSafe(f.path, `Clean up orphaned staged photo ${f.path}`, cfg.token, owner, repo);
+      deleted++;
+    } catch (e) {
+      console.warn('[staging cleanup] failed to delete', f.path, e);
+    }
+  }
+  alert(`Cleaned up ${deleted} of ${orphans.length} leftover staged photo${orphans.length === 1 ? '' : 's'}.`);
+}
+
 // Discard a staged photo entirely (rejected during review, or import abandoned)
 async function ghDiscardStagedPhoto(stagingUrl) {
   try {
@@ -2918,6 +2985,28 @@ function withTimeout(promise, ms, label) {
 function loadPendingImports() {
   try { importPendingByTrip = JSON.parse(localStorage.getItem(PENDING_IMPORTS_KEY) || '{}'); }
   catch { importPendingByTrip = {}; }
+  sweepOrphanedImportEntries();
+}
+
+// Any entry still marked "processing" (mid-upload) or "committing" (mid-save) at the
+// moment the app loads can only be left over from a batch that was interrupted — e.g.
+// the tab was closed or refreshed mid-import. The in-page loop that was updating it is
+// gone for good, and the original selected File was never persisted to localStorage, so
+// there's nothing left to resume. Without this sweep these entries stay stuck forever as
+// an unresponsive "Uploading…"/"Saving…" row with no Assign or Discard button at all.
+function sweepOrphanedImportEntries() {
+  let changed = false;
+  for (const tripId in importPendingByTrip) {
+    for (const entry of importPendingByTrip[tripId]) {
+      if (entry.status === 'processing' || entry.status === 'committing') {
+        entry.status = 'error';
+        entry.errorMsg = 'Import was interrupted (e.g. the tab was closed or refreshed) before this photo finished. Discard it and re-select the photo from your camera roll if you still want to add it.';
+        entry.matches = [];
+        changed = true;
+      }
+    }
+  }
+  if (changed) localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(importPendingByTrip));
 }
 function loadPhotoHashRegistry() {
   try { photoHashRegistry = JSON.parse(localStorage.getItem(PHOTO_HASH_KEY) || '{}'); }
@@ -3239,6 +3328,13 @@ async function handleImportFilesSelected(fileList) {
       entry.filename = filename;
       entry.url = await withTimeout(ghUploadImage(base64, filename, `${IMPORT_STAGING_FOLDER}/${tripSlug}`), IMPORT_FILE_TIMEOUT_MS, 'Uploading photo');
       entry.previewDataUrl = null;
+      // Persist the moment the staging URL is known, not just at the end of this loop
+      // iteration — otherwise a tab close/refresh between a successful upload and the
+      // next persist could leave a real file on GitHub with no local record of it at all
+      // (an unrecoverable orphan). cleanupStagingLeftovers() is the safety net for
+      // whatever slips through anyway (e.g. an upload that finishes just after we gave up
+      // waiting on it).
+      persistPendingImports(tripId);
 
       // Every photo goes to manual review — nothing attaches to an event without
       // the user explicitly confirming it (Section 23.3/23.5 of the spec).
@@ -3353,9 +3449,12 @@ function renderImportReviewItem(p, tripEvs) {
 
   const assignBtnClass = p.status === 'duplicate' ? 'import-btn-sm' : 'import-btn-sm primary';
   const discardBtnClass = p.status === 'duplicate' ? 'import-btn-sm danger primary' : 'import-btn-sm danger';
-  // An in-batch duplicate (not yet attached anywhere) was never uploaded, so there's
-  // nothing to assign yet — only the earlier copy in this same batch can be kept.
-  const canAssign = p.status !== 'duplicate' || p.duplicateOfUrl;
+  // Assign always needs a real URL to attach: a duplicate reuses duplicateOfUrl (or, for
+  // an in-batch duplicate with nothing committed yet, has none and can only be
+  // discarded), while every other status needs its own staged url — which can be missing
+  // for an orphaned entry recovered by sweepOrphanedImportEntries() after an interrupted
+  // import, or for a genuine upload failure that never reached the upload step.
+  const canAssign = p.status === 'duplicate' ? !!p.duplicateOfUrl : !!p.url;
 
   return `
     <div class="import-review-item" data-import-id="${p.id}">
@@ -3477,6 +3576,7 @@ function renderImportModal() {
     }
     html += `<button type="button" class="import-add-more" onclick="document.getElementById('import-file-input').click()">+ Add more photos</button>`;
   }
+  html += `<button type="button" class="import-cleanup-link" onclick="cleanupStagingLeftovers(${importActiveTripId})">🧹 Clean up leftover staged photos</button>`;
   body.innerHTML = html;
 
   // Pre-select the top suggested match for anything that already has one
