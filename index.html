@@ -1611,6 +1611,8 @@ async function fetchWithTimeout(url, options, ms = GEOCODE_TIMEOUT_MS) {
   }
 }
 
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
 // ── MAP CACHE (localStorage persistence) ───────────────────────────────────
 const GEO_TTL   = 30 * 24 * 60 * 60 * 1000; // geocodes: 30 days
 const ROUTE_TTL =  7 * 24 * 60 * 60 * 1000; // routes:    7 days
@@ -2704,24 +2706,17 @@ function resizeImageFile(file, maxDim = PHOTO_MAX_DIM, quality = PHOTO_QUALITY) 
 }
 
 // Upload a base64 JPEG to the repo's media/ folder (or a subfolder, e.g. for staged
-// import photos), reusing the GH sync config/token
+// import photos), reusing the GH sync config/token. Routed through ghApi() so this gets
+// the same request timeout + automatic retry-on-transient-failure as every other GitHub
+// call — important on a lossy connection, since this is the one network call every
+// imported photo absolutely cannot skip.
 async function ghUploadImage(base64Data, filename, folder = 'media') {
   const cfg = ghConfig();
   if (!cfg.token || !cfg.repo) throw new Error('Configure GitHub sync first (Sync button in header).');
   if (!cfg.repo.includes('/')) throw new Error('Repository must be in "owner/repo" format.');
   const [owner, repo] = cfg.repo.split('/');
   const path = `${folder}/${filename}`;
-  const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `token ${cfg.token}`,
-      'Accept': 'application/vnd.github.v3+json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ message: `Add photo ${path}`, content: base64Data }),
-  });
-  const data = await resp.json();
-  if (!resp.ok) throw new Error(data.message || `Upload failed (${resp.status})`);
+  await ghApi('PUT', path, { message: `Add photo ${path}`, content: base64Data }, cfg.token, owner, repo);
   return `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
 }
 
@@ -2986,9 +2981,15 @@ const IMPORT_FILE_TIMEOUT_MS  = 30000; // ceiling for EACH individual step (hash
                                         // main thread at the native layer, which no JS-level timeout can
                                         // preempt. importCancelRequested (below) and the page-reload recovery
                                         // path (sweepOrphanedImportEntries) are the backstops for that case.
-const IMPORT_COMMIT_TIMEOUT_MS = 30000; // ceiling for the GitHub commit/replace step when assigning a photo —
-                                         // without this, a hung network call left an entry stuck in "Saving…"
-                                         // forever with no way to discard or assign anything else
+const IMPORT_COMMIT_TIMEOUT_MS = 120000; // ceiling for the GitHub commit/replace step when assigning a photo —
+                                          // without this, a hung network call left an entry stuck in "Saving…"
+                                          // forever with no way to discard or assign anything else. Kept
+                                          // deliberately generous (well beyond ghApi's own worst-case retry
+                                          // budget of several GET/PUT/DELETE calls, each retried internally on
+                                          // a lossy connection) so this doesn't cut off a retry sequence that
+                                          // was still legitimately working — the "Taking too long? Reset"
+                                          // button (Section 23.9) is the immediate manual escape hatch if the
+                                          // user doesn't want to wait that long.
 
 let importPendingByTrip   = {}; // { [tripId]: [ {id,url,filename,previewDataUrl,takenAt,lat,lon,dateSource,hash,status,matches,committedEventId} ] }
 let photoHashRegistry     = {}; // { [tripId]: { [sha256hex]: finalUrl } } — for duplicate detection
@@ -3391,7 +3392,13 @@ async function handleImportFilesSelected(fileList) {
       const base64 = dataUrl.split(',')[1];
       const filename = `import-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.jpg`;
       entry.filename = filename;
-      entry.url = await withTimeout(ghUploadImage(base64, filename, `${IMPORT_STAGING_FOLDER}/${tripSlug}`), IMPORT_FILE_TIMEOUT_MS, 'Uploading photo');
+      // Not wrapped in the generic withTimeout/IMPORT_FILE_TIMEOUT_MS ceiling used for the
+      // other steps — ghUploadImage goes through ghApi(), which already retries transient
+      // failures internally over a longer budget (built for exactly the packet-loss case).
+      // Racing a shorter outer timeout against that would just abandon a retry that was
+      // about to succeed, and the abandoned upload can still land on GitHub moments later
+      // with no local record of it (cleanupStagingLeftovers() is the safety net for that).
+      entry.url = await ghUploadImage(base64, filename, `${IMPORT_STAGING_FOLDER}/${tripSlug}`);
       entry.previewDataUrl = null;
       // Persist the moment the staging URL is known, not just at the end of this loop
       // iteration — otherwise a tab close/refresh between a successful upload and the
@@ -3857,7 +3864,15 @@ function ghDecode(b64) {
   return new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\n/g,'')), c => c.charCodeAt(0)));
 }
 
-async function ghApi(method, path, body, token, owner, repo) {
+// On a connection dropping packets (satellite internet, weak cell signal, etc.), a
+// single request failing is normal and usually transient — the request most likely
+// would have succeeded a second later. Every GitHub call goes through here, so retrying
+// transient failures at this one choke point (instead of at every call site) makes the
+// whole photo-import pipeline — and everything else that talks to GitHub — resilient to
+// exactly the kind of packet loss described in testing over Starlink.
+const GH_API_TIMEOUT_MS = 20000;
+const GH_API_MAX_ATTEMPTS = 4;
+async function ghApi(method, path, body, token, owner, repo, attempt = 1) {
   const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
   const opts = {
     method,
@@ -3868,8 +3883,28 @@ async function ghApi(method, path, body, token, owner, repo) {
     },
   };
   if (body) opts.body = JSON.stringify(body);
-  const resp = await fetch(url, opts);
+
+  let resp;
+  try {
+    resp = await fetchWithTimeout(url, opts, GH_API_TIMEOUT_MS);
+  } catch (e) {
+    // Covers both a dropped-connection fetch failure and our own timeout (AbortError) —
+    // on a lossy connection this is the common case, not the exception, so retry a few
+    // times with a short backoff before giving up.
+    if (attempt < GH_API_MAX_ATTEMPTS) {
+      await sleep(attempt * 700);
+      return ghApi(method, path, body, token, owner, repo, attempt + 1);
+    }
+    throw new Error(`Network error reaching GitHub after ${GH_API_MAX_ATTEMPTS} attempts (${e.message || 'request failed'}) — check your connection and try again.`);
+  }
   if (resp.status === 404) return null;
+  if ((resp.status >= 500 || resp.status === 403) && attempt < GH_API_MAX_ATTEMPTS) {
+    // 5xx is a transient GitHub-side hiccup; 403 is usually a secondary rate limit that
+    // clears on its own after a short wait. Both are worth retrying before surfacing as
+    // a real error to the user.
+    await sleep(attempt * 1200);
+    return ghApi(method, path, body, token, owner, repo, attempt + 1);
+  }
   const data = await resp.json();
   if (!resp.ok) throw new Error(data.message || `GitHub API error ${resp.status}`);
   return data;
