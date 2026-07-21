@@ -267,6 +267,11 @@ body {
   letter-spacing: .6px; margin: 14px 0 8px;
 }
 .import-section-title:first-child { margin-top: 0; }
+.import-section-title-main {
+  font-size: 13px; font-weight: 700; color: #334155; text-transform: none;
+  letter-spacing: 0; margin: 20px 0 6px; padding-top: 12px; border-top: 1px solid #e2e8f0;
+}
+.import-section-title-main:first-child { padding-top: 0; border-top: none; margin-top: 0; }
 .import-empty-note { font-size: 12px; color: #94a3b8; text-align: center; padding: 10px; }
 .import-add-more {
   display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -2889,6 +2894,9 @@ const IMPORT_MAX_BATCH        = 50;   // max photos per import batch — large b
 const IMPORT_FILE_TIMEOUT_MS  = 45000; // per-photo ceiling (hash/EXIF/resize/upload combined) — if a single
                                         // photo hangs (e.g. a slow iCloud download), skip it instead of
                                         // freezing the rest of the batch
+const IMPORT_COMMIT_TIMEOUT_MS = 30000; // ceiling for the GitHub commit/replace step when assigning a photo —
+                                         // without this, a hung network call left an entry stuck in "Saving…"
+                                         // forever with no way to discard or assign anything else
 
 let importPendingByTrip   = {}; // { [tripId]: [ {id,url,filename,previewDataUrl,takenAt,lat,lon,dateSource,hash,status,matches,committedEventId} ] }
 let photoHashRegistry     = {}; // { [tripId]: { [sha256hex]: finalUrl } } — for duplicate detection
@@ -3365,16 +3373,58 @@ function renderImportReviewItem(p, tripEvs) {
     </div>`;
 }
 
+// A single malformed/unexpected entry should never be able to take down the whole
+// review panel (that's what caused the "stuck, can't discard or assign anything"
+// bug) — render each item defensively and fall back to a removable placeholder.
+function safeRenderReviewItem(p, tripEvs) {
+  try {
+    return renderImportReviewItem(p, tripEvs);
+  } catch (e) {
+    console.error('[photo import] failed to render review item', p && p.id, e);
+    return `
+      <div class="import-review-item" data-import-id="${p.id}">
+        <div class="import-review-body">
+          <div class="import-review-status error">Couldn't display this photo</div>
+          <div class="import-review-meta">Something went wrong showing this item. You can discard it and keep going.</div>
+          <div class="import-review-actions">
+            <button type="button" class="import-btn-sm danger" onclick="discardImportPhoto('${p.id}')">Discard</button>
+          </div>
+        </div>
+      </div>`;
+  }
+}
+
 function renderImportModal() {
   const body = document.getElementById('import-body');
   if (!body || importActiveTripId == null) return;
   const list = getPendingList(importActiveTripId);
   const tripEvs = events.filter(e => e.tripId === importActiveTripId).sort((a, b) => a.start - b.start);
   const processing = list.filter(p => p.status === 'processing');
-  const suggested = list.filter(p => p.status === 'confident');
-  const needsReview = list.filter(p => ['ambiguous', 'unmatched', 'error'].includes(p.status));
-  const duplicates = list.filter(p => p.status === 'duplicate');
-  const reviewTotal = suggested.length + needsReview.length + duplicates.length;
+  const committing = list.filter(p => p.status === 'committing');
+  const reviewable = list.filter(p => ['confident', 'ambiguous', 'unmatched', 'error', 'duplicate'].includes(p.status));
+  const withExif = reviewable.filter(p => p.dateSource === 'exif');
+  const noExif = reviewable.filter(p => p.dateSource !== 'exif');
+  const reviewTotal = reviewable.length;
+
+  const renderGroup = (items) => {
+    const suggested = items.filter(p => p.status === 'confident');
+    const needsReview = items.filter(p => ['ambiguous', 'unmatched', 'error'].includes(p.status));
+    const duplicates = items.filter(p => p.status === 'duplicate');
+    let h = '';
+    if (suggested.length) {
+      h += `<div class="import-section-title">Suggested matches — tap Assign to confirm</div>`;
+      h += suggested.map(p => safeRenderReviewItem(p, tripEvs)).join('');
+    }
+    if (needsReview.length) {
+      h += `<div class="import-section-title">Needs a closer look</div>`;
+      h += needsReview.map(p => safeRenderReviewItem(p, tripEvs)).join('');
+    }
+    if (duplicates.length) {
+      h += `<div class="import-section-title">Likely duplicates — discard suggested</div>`;
+      h += duplicates.map(p => safeRenderReviewItem(p, tripEvs)).join('');
+    }
+    return h;
+  };
 
   let html = '';
   if (!list.length && !importBusy) {
@@ -3401,17 +3451,26 @@ function renderImportModal() {
           <div class="import-review-body"><div class="import-review-meta">Uploading &amp; matching…</div></div>
         </div>`).join('');
     }
-    if (suggested.length) {
-      html += `<div class="import-section-title">Suggested matches — tap Assign to confirm</div>`;
-      html += suggested.map(p => renderImportReviewItem(p, tripEvs)).join('');
+    if (committing.length) {
+      html += `<div class="import-section-title">Saving…</div>`;
+      html += committing.map(p => `
+        <div class="import-progress-row">
+          <img class="import-thumb" src="${p.previewDataUrl || p.url || ''}" onerror="this.style.visibility='hidden'">
+          <div class="import-review-body">
+            <div class="import-review-meta">Saving to the event…</div>
+            <button type="button" class="import-btn-sm" onclick="resetStuckImportEntry('${p.id}')">Taking too long? Reset</button>
+          </div>
+        </div>`).join('');
     }
-    if (needsReview.length) {
-      html += `<div class="import-section-title">Needs a closer look</div>`;
-      html += needsReview.map(p => renderImportReviewItem(p, tripEvs)).join('');
+    if (withExif.length) {
+      html += `<div class="import-section-title import-section-title-main">📅 Photos with date info (${withExif.length})</div>`;
+      html += renderGroup(withExif);
     }
-    if (duplicates.length) {
-      html += `<div class="import-section-title">Likely duplicates — discard suggested</div>`;
-      html += duplicates.map(p => renderImportReviewItem(p, tripEvs)).join('');
+    if (noExif.length) {
+      html += `<div class="import-section-title import-section-title-main">⚠️ Photos without date info (${noExif.length})</div>`;
+      html += `<div class="import-review-warning">These are missing a reliable date (often photos re-shared via WhatsApp/Messages, screenshots, or downloads), so event matching is less certain. Review below, or clear them all at once.</div>`;
+      html += `<button type="button" class="import-btn-sm danger" onclick="discardAllNoExif()">Discard all ${noExif.length} without date info</button>`;
+      html += renderGroup(noExif);
     }
     if (!list.length && !importBusy) {
       html += `<div class="import-empty-note">Nothing left to review for this trip.</div>`;
@@ -3421,12 +3480,43 @@ function renderImportModal() {
   body.innerHTML = html;
 
   // Pre-select the top suggested match for anything that already has one
-  [...suggested, ...needsReview].forEach(p => {
-    if (p.status !== 'unmatched' && p.matches && p.matches[0]) {
+  reviewable.forEach(p => {
+    if (p.status !== 'unmatched' && p.status !== 'duplicate' && p.matches && p.matches[0]) {
       const sel = document.getElementById('import-select-' + p.id);
       if (sel) sel.value = p.matches[0].eventId;
     }
   });
+}
+
+// Bulk-clear everything lacking real EXIF date info (file-date-only or no-date photos),
+// which is also the pool most prone to unreliable event matching.
+function discardAllNoExif() {
+  const tripId = importActiveTripId;
+  const list = getPendingList(tripId);
+  const targets = list.filter(p => p.dateSource !== 'exif' && ['confident', 'ambiguous', 'unmatched', 'error', 'duplicate'].includes(p.status));
+  if (!targets.length) return;
+  if (!confirm(`Discard ${targets.length} photo${targets.length === 1 ? '' : 's'} without date info? This can't be undone.`)) return;
+  targets.forEach(entry => {
+    const idx = list.findIndex(p => p.id === entry.id);
+    if (idx !== -1) list.splice(idx, 1);
+    if (entry.url) ghDiscardStagedPhoto(entry.url); // fire-and-forget
+  });
+  persistPendingImports(tripId);
+  renderImportModal();
+}
+
+// Safety valve for the bug where a photo could get permanently wedged in the
+// "Saving…" state (e.g. a hung network call) with no way to discard or assign
+// anything else. Bounces it back to a reviewable state so the panel never locks up.
+function resetStuckImportEntry(id) {
+  const tripId = importActiveTripId;
+  const list = getPendingList(tripId);
+  const entry = list.find(p => p.id === id);
+  if (!entry) return;
+  entry.status = entry.matches && entry.matches.length ? 'error' : 'unmatched';
+  entry.errorMsg = 'Reset after taking too long to save. Please try Assign or Discard again.';
+  persistPendingImports(tripId);
+  renderImportModal();
 }
 
 async function confirmImportAssignment(id) {
@@ -3447,18 +3537,18 @@ async function confirmImportAssignment(id) {
     return;
   }
   entry.status = 'committing';
-  renderImportModal();
+  try { renderImportModal(); } catch (e0) { console.error('[photo import] render failed', e0); }
   try {
-    await commitPendingPhoto(entry, ev, tripId, list);
+    await withTimeout(commitPendingPhoto(entry, ev, tripId, list), IMPORT_COMMIT_TIMEOUT_MS, 'Saving photo');
     save();
     if (document.getElementById('trip-viz-overlay')?.classList.contains('open')) openTripViz(tripId);
   } catch (e) {
     entry.status = 'error';
-    entry.errorMsg = e.message;
-    alert('Failed to assign photo: ' + e.message);
+    entry.errorMsg = e && e.message ? e.message : 'Unknown error';
+    alert('Failed to assign photo: ' + entry.errorMsg);
   }
   persistPendingImports(tripId);
-  renderImportModal();
+  try { renderImportModal(); } catch (e2) { console.error('[photo import] render failed', e2); }
 }
 
 function cancelReplacePicker() {
@@ -3476,20 +3566,20 @@ async function replaceEventPhoto(id, eventId, oldUrl) {
   if (!ev) return;
   importReplacePicker = null;
   entry.status = 'committing';
-  renderImportModal();
+  try { renderImportModal(); } catch (e0) { console.error('[photo import] render failed', e0); }
   try {
     ev.photos = (ev.photos || []).filter(u => u !== oldUrl);
     ghDeleteImage(oldUrl); // fire-and-forget cleanup of the removed photo
-    await commitPendingPhoto(entry, ev, tripId, list);
+    await withTimeout(commitPendingPhoto(entry, ev, tripId, list), IMPORT_COMMIT_TIMEOUT_MS, 'Saving photo');
     save();
     if (document.getElementById('trip-viz-overlay')?.classList.contains('open')) openTripViz(tripId);
   } catch (e) {
     entry.status = 'error';
-    entry.errorMsg = e.message;
-    alert('Failed to replace photo: ' + e.message);
+    entry.errorMsg = e && e.message ? e.message : 'Unknown error';
+    alert('Failed to replace photo: ' + entry.errorMsg);
   }
   persistPendingImports(tripId);
-  renderImportModal();
+  try { renderImportModal(); } catch (e2) { console.error('[photo import] render failed', e2); }
 }
 
 function discardImportPhoto(id) {
