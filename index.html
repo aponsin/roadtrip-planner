@@ -208,6 +208,7 @@ body {
 .import-summary-chip.ok       { background: #d1fae5; color: #065f46; }
 .import-summary-chip.pending  { background: #fef3c7; color: #92400e; }
 .import-summary-chip.progress { background: #dbeafe; color: #1e40af; }
+.import-cancel-row { margin-bottom: 14px; }
 .import-progress-row {
   display: flex; gap: 12px; align-items: center;
   padding: 9px 10px; border-radius: 9px; margin-bottom: 6px;
@@ -2958,9 +2959,15 @@ const IMPORT_SMALL_FILE_BYTES = 400 * 1024; // below this, a photo is suspicious
                                              // reflects when it was received rather than when it was taken
 const IMPORT_MAX_BATCH        = 50;   // max photos per import batch — large batches can stall on iPhone
                                        // while iOS downloads full-resolution originals from iCloud one at a time
-const IMPORT_FILE_TIMEOUT_MS  = 45000; // per-photo ceiling (hash/EXIF/resize/upload combined) — if a single
-                                        // photo hangs (e.g. a slow iCloud download), skip it instead of
-                                        // freezing the rest of the batch
+const IMPORT_FILE_TIMEOUT_MS  = 30000; // ceiling for EACH individual step (hash/EXIF/resize/upload) — if a
+                                        // single step hangs (e.g. a slow iCloud download), fail fast and move
+                                        // on instead of freezing the rest of the batch indefinitely. Note:
+                                        // this timeout can only fire if the browser's JS engine is still
+                                        // running — on iOS Safari, reading bytes from a photo that still
+                                        // needs to download from iCloud can occasionally block the page's
+                                        // main thread at the native layer, which no JS-level timeout can
+                                        // preempt. importCancelRequested (below) and the page-reload recovery
+                                        // path (sweepOrphanedImportEntries) are the backstops for that case.
 const IMPORT_COMMIT_TIMEOUT_MS = 30000; // ceiling for the GitHub commit/replace step when assigning a photo —
                                          // without this, a hung network call left an entry stuck in "Saving…"
                                          // forever with no way to discard or assign anything else
@@ -2972,6 +2979,9 @@ let importBusy            = false;
 let importBatchIndex      = 0; // 1-based position of the photo currently being processed in this batch
 let importBatchTotal      = 0;
 let importReplacePicker = null; // { entryId, eventId } while showing the "pick a photo to swap out" sub-view
+let importCancelRequested = false; // set by the "Cancel remaining" button during an active batch; checked
+                                    // between photos so the loop can stop cleanly instead of grinding through
+                                    // every remaining file after the user has already given up on this batch
 
 // Race a promise against a timeout so one hung file (e.g. a photo still downloading
 // from iCloud) can never block the rest of the import batch indefinitely.
@@ -3259,6 +3269,16 @@ function closeImportModal() {
   importReplacePicker = null;
 }
 
+// Best-effort "give up on this batch" button, shown while a batch is running. Can only
+// take effect once control returns to the loop between photos — see the check at the
+// top of the loop in handleImportFilesSelected for why this can't interrupt a photo
+// that's already in flight.
+function cancelImportBatch() {
+  if (!importBusy || importCancelRequested) return;
+  importCancelRequested = true;
+  renderImportModal();
+}
+
 async function handleImportFilesSelected(fileList) {
   const files = Array.from(fileList || []);
   document.getElementById('import-file-input').value = '';
@@ -3277,6 +3297,7 @@ async function handleImportFilesSelected(fileList) {
   const list = getPendingList(tripId);
 
   importBusy = true;
+  importCancelRequested = false;
   importBatchIndex = 0;
   importBatchTotal = files.length;
   renderImportModal();
@@ -3306,6 +3327,19 @@ async function handleImportFilesSelected(fileList) {
 
   for (const { file, entry } of pairs) {
     importBatchIndex++;
+
+    // Checked between photos (not during one) so a user who gives up on a stalled batch
+    // has an actual button to press instead of only knowing to reload the page. This can
+    // only take effect once control returns to this loop, so it won't help if the photo
+    // currently in flight is genuinely blocking the main thread — but it does stop the
+    // batch from grinding through every remaining file once the user has already bailed.
+    if (importCancelRequested) {
+      entry.status = 'error';
+      entry.errorMsg = 'Import batch was cancelled before this photo was processed.';
+      persistPendingImports(tripId);
+      continue;
+    }
+
     try {
       const hash = await withTimeout(sha256HexOfFile(file), IMPORT_FILE_TIMEOUT_MS, 'Reading photo');
       entry.hash = hash;
@@ -3537,7 +3571,7 @@ function renderImportModal() {
     html = `
       <div class="import-picker">
         <div class="import-picker-icon">📷</div>
-        <div class="import-picker-hint">Pick up to ${IMPORT_MAX_BATCH} photos from your camera roll at a time — we'll suggest the closest event for each one by date and location, but every photo waits for your confirmation before it's attached to anything. For a large batch, keep this tab open and active until it finishes uploading — switching away or locking the screen can interrupt it partway through.</div>
+        <div class="import-picker-hint">Pick up to ${IMPORT_MAX_BATCH} photos from your camera roll at a time — we'll suggest the closest event for each one by date and location, but every photo waits for your confirmation before it's attached to anything. Keep this tab open and active until it finishes — switching away or locking the screen can interrupt it partway through. Photos still stored in iCloud (not downloaded to this device) are the most likely to stall; opening them once in the Photos app first, or importing in smaller batches of 10&ndash;15, makes this much more reliable.</div>
         <button type="button" class="import-pick-btn" onclick="document.getElementById('import-file-input').click()">Select Photos</button>
       </div>`;
   } else {
@@ -3548,6 +3582,16 @@ function renderImportModal() {
     if (reviewTotal) chips.push(`<span class="import-summary-chip pending">${reviewTotal} to review</span>`);
     if (!processing.length && !reviewTotal && !importBusy) chips.push(`<span class="import-summary-chip ok">All caught up ✓</span>`);
     html += `<div class="import-summary">${chips.join('')}</div>`;
+    if (importBusy) {
+      html += importCancelRequested
+        ? `<div class="import-cancel-row"><span class="import-review-meta">Wrapping up — the rest of this batch will be marked as interrupted…</span></div>`
+        : `<div class="import-cancel-row"><button type="button" class="import-btn-sm danger" onclick="cancelImportBatch()">Cancel remaining photos</button></div>`;
+    }
+    const failedCount = list.filter(p => p.status === 'error').length;
+    if (failedCount >= 2) {
+      html += `<div class="import-review-warning">⚠ ${failedCount} photos in this queue failed or were interrupted before finishing.</div>`;
+      html += `<button type="button" class="import-btn-sm danger" onclick="discardAllFailed()">Discard all ${failedCount} failed/interrupted</button>`;
+    }
 
     if (processing.length) {
       html += `<div class="import-section-title">Processing</div>`;
@@ -3607,6 +3651,24 @@ function discardAllNoExif() {
     const idx = list.findIndex(p => p.id === entry.id);
     if (idx !== -1) list.splice(idx, 1);
     if (entry.url) ghDiscardStagedPhoto(entry.url); // fire-and-forget
+  });
+  persistPendingImports(tripId);
+  renderImportModal();
+}
+
+// Bulk-clear every failed/interrupted entry at once — the fast way to recover from a
+// batch that got cancelled partway through or hit a run of stuck photos, instead of
+// discarding dozens of "interrupted" cards one at a time.
+function discardAllFailed() {
+  const tripId = importActiveTripId;
+  const list = getPendingList(tripId);
+  const targets = list.filter(p => p.status === 'error');
+  if (!targets.length) return;
+  if (!confirm(`Discard ${targets.length} failed/interrupted photo${targets.length === 1 ? '' : 's'}? This can't be undone.`)) return;
+  targets.forEach(entry => {
+    const idx = list.findIndex(p => p.id === entry.id);
+    if (idx !== -1) list.splice(idx, 1);
+    if (entry.url) ghDiscardStagedPhoto(entry.url); // fire-and-forget — cleans up anything that did upload
   });
   persistPendingImports(tripId);
   renderImportModal();
