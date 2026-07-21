@@ -2727,7 +2727,12 @@ async function ghUploadImage(base64Data, filename, folder = 'media') {
   if (!cfg.repo.includes('/')) throw new Error('Repository must be in "owner/repo" format.');
   const [owner, repo] = cfg.repo.split('/');
   const path = `${folder}/${filename}`;
-  await ghApi('PUT', path, { message: `Add photo ${path}`, content: base64Data }, cfg.token, owner, repo);
+  // ghPutFileSafe (not a raw PUT): on a lossy connection, a write can land on GitHub
+  // while its response gets dropped — ghApi then retries, and a blind retry of a PUT is
+  // rejected by GitHub with a sha error ("is at X but expected Y" / "sha wasn't
+  // supplied") even though the upload actually succeeded. The safe writer checks what's
+  // at the path first and treats already-written-identical-content as success.
+  await ghPutFileSafe(path, `Add photo ${path}`, base64Data, cfg.token, owner, repo);
   return `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
 }
 
@@ -2749,6 +2754,15 @@ function ghParseRepoPath(url) {
 // error shows up, which resolves itself once the other write has landed.
 function isShaConflict(e) {
   return /sha|does not match|409/i.test(e && e.message || '');
+}
+// Raw GitHub sha errors ("is at 4fd4dd0… but expected 4d65b58…") are meaningless and
+// alarming to a user — translate them before they reach an alert or a review card.
+function friendlyGhError(e) {
+  const msg = e && e.message ? e.message : 'Unknown error';
+  if (isShaConflict({ message: msg })) {
+    return 'GitHub reported a conflicting update — this usually just means a response got lost on a flaky connection and the operation may in fact have succeeded. Retrying normally resolves it.';
+  }
+  return msg;
 }
 async function ghPutFileSafe(path, message, base64Content, token, owner, repo, attempt = 1) {
   const existing = await ghApi('GET', path, null, token, owner, repo);
@@ -3159,25 +3173,51 @@ async function ensureExifr() {
   return !!window.exifr;
 }
 
+// The lite exifr build (loaded by default — much smaller) only understands JPEG and
+// HEIC internals. PNG files — the most common collage-app export format — and some
+// edited/re-encoded files carry their metadata in structures only the full build can
+// parse. When the lite parse comes up empty, upgrade to the full build once per session
+// and retry, rather than concluding "no EXIF" prematurely.
+let _exifrFullTried = false;
+async function ensureExifrFull() {
+  if (_exifrFullTried) return;
+  _exifrFullTried = true;
+  try { await loadScriptOnce('https://cdn.jsdelivr.net/npm/exifr/dist/full.umd.js'); } catch (_) {}
+}
+
 // Pull DateTimeOriginal + GPS out of a photo's EXIF data (via the exifr CDN library).
 // Falls back to the file's own last-modified time (much less reliable — e.g. it
 // reflects when a photo was saved/transferred, not necessarily taken) if no EXIF date
-// is present at all.
+// can be read at all. exifNote distinguishes "this file simply has no EXIF" (normal
+// for collages/screenshots/WhatsApp copies) from "reading its metadata failed", so the
+// review UI can be honest about which one happened.
 async function extractPhotoMeta(file) {
-  let takenAt = null, lat = null, lon = null, dateSource = 'none';
+  let takenAt = null, lat = null, lon = null, dateSource = 'none', exifNote = null;
+  const parseTags = () => exifr.parse(file, { gps: true, pick: ['DateTimeOriginal', 'CreateDate', 'ModifyDate', 'latitude', 'longitude'] });
+  let tags = null, parseFailed = false;
   try {
-    if (window.exifr) {
-      const tags = await exifr.parse(file, { gps: true, pick: ['DateTimeOriginal', 'CreateDate', 'ModifyDate', 'latitude', 'longitude'] });
-      if (tags) {
-        const d = tags.DateTimeOriginal || tags.CreateDate || tags.ModifyDate;
-        if (d instanceof Date && !isNaN(d)) { takenAt = d.getTime(); dateSource = 'exif'; }
-        if (typeof tags.latitude === 'number')  lat = tags.latitude;
-        if (typeof tags.longitude === 'number') lon = tags.longitude;
+    if (window.exifr) tags = await parseTags();
+  } catch (e) { parseFailed = true; console.warn('[exif parse]', file.name, e); }
+  if (!tags || !(tags.DateTimeOriginal || tags.CreateDate || tags.ModifyDate)) {
+    await ensureExifrFull();
+    try {
+      if (window.exifr) {
+        const retry = await parseTags();
+        if (retry) { tags = retry; parseFailed = false; }
       }
-    }
-  } catch (e) { console.warn('[exif parse]', file.name, e); }
-  if (takenAt == null && file.lastModified) { takenAt = file.lastModified; dateSource = 'file'; }
-  return { takenAt, lat, lon, dateSource };
+    } catch (e) { parseFailed = true; console.warn('[exif parse, full build]', file.name, e); }
+  }
+  if (tags) {
+    const d = tags.DateTimeOriginal || tags.CreateDate || tags.ModifyDate;
+    if (d instanceof Date && !isNaN(d)) { takenAt = d.getTime(); dateSource = 'exif'; }
+    if (typeof tags.latitude === 'number')  lat = tags.latitude;
+    if (typeof tags.longitude === 'number') lon = tags.longitude;
+  }
+  if (takenAt == null) {
+    if (parseFailed) exifNote = 'unreadable';
+    if (file.lastModified) { takenAt = file.lastModified; dateSource = 'file'; }
+  }
+  return { takenAt, lat, lon, dateSource, exifNote };
 }
 
 function distanceMiles(lat1, lon1, lat2, lon2) {
@@ -3334,14 +3374,14 @@ async function mirrorPendingManifestNow(tripId) {
     // this manifest ballooned to multiple MB, and GitHub's Contents API can't even read
     // files over 1MB back, which also silently broke cross-device resume.
     const list = pendingListsWithoutPreviews()[tripId] || [];
-    const existing = await ghApi('GET', path, null, cfg.token, owner, repo).catch(() => null);
+    // Sha-safe writers (not raw PUT/DELETE with a pre-fetched sha): a lost response on
+    // a lossy connection makes ghApi retry a write that already landed, and the stale
+    // sha then draws "is at X but expected Y" — the safe wrappers re-check and recover.
     if (!list.length) {
-      if (existing) await ghApi('DELETE', path, { message: 'Clear pending photo import queue', sha: existing.sha }, cfg.token, owner, repo).catch(() => {});
+      await ghDeleteFileSafe(path, 'Clear pending photo import queue', cfg.token, owner, repo).catch(() => {});
       return;
     }
-    const body = { message: `Update pending photo import queue (${list.length})`, content: ghEncode(JSON.stringify(list)) };
-    if (existing) body.sha = existing.sha;
-    await ghApi('PUT', path, body, cfg.token, owner, repo).catch(() => {});
+    await ghPutFileSafe(path, `Update pending photo import queue (${list.length})`, ghEncode(JSON.stringify(list)), cfg.token, owner, repo).catch(() => {});
   } catch (e) { console.warn('[pending import mirror]', e); }
 }
 async function tryResumeFromRemoteManifest(tripId) {
@@ -3575,7 +3615,7 @@ async function processImportFile(file, entry, tripId, tripEvs, tripSlug, list) {
     entry.status = status; // 'confident' (pre-selected suggestion), 'ambiguous', or 'unmatched'
   } catch (e) {
     entry.status = 'error';
-    entry.errorMsg = e && e.message ? e.message : 'Unknown error';
+    entry.errorMsg = friendlyGhError(e);
     console.error('[photo import]', e);
   }
 }
@@ -3685,7 +3725,11 @@ function renderImportReviewItem(p, tripEvs) {
   const others = tripEvs.filter(e => !suggestedIds.has(e.id));
   let dateLabel = 'No date info';
   if (p.dateSource === 'exif') dateLabel = fmtImportDate(p.takenAt);
-  else if (p.dateSource === 'file') dateLabel = fmtImportDate(p.takenAt) + ' (file date, no EXIF)';
+  else if (p.dateSource === 'file') {
+    dateLabel = fmtImportDate(p.takenAt) + (p.exifNote === 'unreadable'
+      ? ' (file date — photo metadata couldn’t be read)'
+      : ' (file date, no EXIF)');
+  }
   const gpsLabel = p.lat != null ? '📍 has GPS' : '';
   const sizeLabel = p.fileSize != null ? `${Math.round(p.fileSize / 1024)}KB` : '';
   const metaBits = [dateLabel, gpsLabel, sizeLabel].filter(Boolean).join(' · ');
@@ -3980,7 +4024,7 @@ async function confirmImportAssignment(id) {
     if (document.getElementById('trip-viz-overlay')?.classList.contains('open')) openTripViz(tripId);
   } catch (e) {
     entry.status = 'error';
-    entry.errorMsg = e && e.message ? e.message : 'Unknown error';
+    entry.errorMsg = friendlyGhError(e);
     alert('Failed to assign photo: ' + entry.errorMsg);
   }
   persistPendingImports(tripId);
@@ -4011,7 +4055,7 @@ async function replaceEventPhoto(id, eventId, oldUrl) {
     if (document.getElementById('trip-viz-overlay')?.classList.contains('open')) openTripViz(tripId);
   } catch (e) {
     entry.status = 'error';
-    entry.errorMsg = e && e.message ? e.message : 'Unknown error';
+    entry.errorMsg = friendlyGhError(e);
     alert('Failed to replace photo: ' + entry.errorMsg);
   }
   persistPendingImports(tripId);
@@ -4208,18 +4252,9 @@ async function ghShareTrip(tripId) {
   const filePath = `shared/${shareId}.json`;
 
   try {
-    // Check if file already exists (to get SHA for update)
-    let existingSha;
-    const existing = await ghApi('GET', filePath, null, token, owner, repo);
-    if (existing) existingSha = existing.sha;
-
-    const putBody = {
-      message: `Share trip: ${trip.name}`,
-      content: ghEncode(JSON.stringify(payload)),
-    };
-    if (existingSha) putBody.sha = existingSha;
-
-    await ghApi('PUT', filePath, putBody, token, owner, repo);
+    // Sha-safe writer handles both create and update, and recovers if a retry after a
+    // lost response collides with our own already-landed write (lossy connections).
+    await ghPutFileSafe(filePath, `Share trip: ${trip.name}`, ghEncode(JSON.stringify(payload)), token, owner, repo);
 
     const shareUrl = `https://${owner}.github.io/${repo}/?share=${shareId}`;
     document.getElementById('share-url-input').value = shareUrl;
@@ -4272,26 +4307,17 @@ async function ghSave() {
         // Archive the old version before overwriting
         const histName = ghHistoryFilename(trip, deviceLabel);
         try {
-          await ghApi('PUT', `data/history/${histName}`, {
-            message: `Archive: ${trip.name} (${deviceLabel})`,
-            content: existing.content.replace(/\n/g,''),
-          }, token, owner, repo);
+          await ghPutFileSafe(`data/history/${histName}`, `Archive: ${trip.name} (${deviceLabel})`, existing.content.replace(/\n/g,''), token, owner, repo);
           ghLog(`  ↳ archived previous version as ${histName}`, 'info');
         } catch(archErr) {
           ghLog(`  ⚠ Archive failed: ${archErr.message}`, 'warn');
         }
-        // Update current file
-        await ghApi('PUT', `data/${filename}`, {
-          message: `Update trip: ${trip.name} [${deviceLabel}]`,
-          content: ghEncode(newCsv),
-          sha: existing.sha,
-        }, token, owner, repo);
+        // Update current file (sha-safe: recovers if a retry after a lost response
+        // collides with our own already-landed write)
+        await ghPutFileSafe(`data/${filename}`, `Update trip: ${trip.name} [${deviceLabel}]`, ghEncode(newCsv), token, owner, repo);
       } else {
         // New trip — create from scratch
-        await ghApi('PUT', `data/${filename}`, {
-          message: `Create trip: ${trip.name} [${deviceLabel}]`,
-          content: ghEncode(newCsv),
-        }, token, owner, repo);
+        await ghPutFileSafe(`data/${filename}`, `Create trip: ${trip.name} [${deviceLabel}]`, ghEncode(newCsv), token, owner, repo);
       }
       ghLog(`✓ Saved "${trip.name}"`, 'ok');
       saved++;
