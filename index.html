@@ -155,6 +155,28 @@ body {
 .gh-log-warn  { color: #d97706; }
 .gh-log-error { color: #dc2626; }
 .gh-log-info  { color: #64748b; }
+.gh-picker-title { font-size: 12px; font-weight: 700; color: #334155; margin: 2px 0 8px; }
+.gh-picker-list {
+  max-height: 190px; overflow-y: auto; border: 1px solid #e2e8f0;
+  border-radius: 8px; padding: 4px; margin-bottom: 10px; background: #fff;
+}
+.gh-picker-item {
+  display: flex; align-items: center; gap: 9px; padding: 8px 9px;
+  border-radius: 6px; font-size: 13px; color: #0f172a; cursor: pointer;
+}
+.gh-picker-item:hover { background: #f8fafc; }
+.gh-picker-item input { accent-color: #2563eb; width: 15px; height: 15px; flex-shrink: 0; }
+.gh-picker-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-picker-badge {
+  margin-left: auto; font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 10px; flex-shrink: 0;
+}
+.gh-picker-badge.new     { background: #d1fae5; color: #065f46; }
+.gh-picker-badge.replace { background: #fef3c7; color: #92400e; }
+.gh-picker-toggle {
+  background: none; border: none; cursor: pointer; font-size: 11px;
+  color: #2563eb; padding: 0; margin: 0 0 6px; font-weight: 600;
+}
 .gh-hint {
   font-size: 11px; color: #94a3b8; line-height: 1.6; margin: 0;
 }
@@ -1259,6 +1281,16 @@ body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
     <div class="gh-actions" id="gh-actions">
       <button class="gh-btn save" onclick="ghSave()">⬆ Save to GitHub</button>
       <button class="gh-btn load" onclick="ghLoad()">⬇ Load from GitHub</button>
+    </div>
+    <!-- Trip picker (shown before save/load so only selected trips are touched) -->
+    <div id="gh-picker" style="display:none">
+      <div class="gh-picker-title" id="gh-picker-title"></div>
+      <button type="button" class="gh-picker-toggle" id="gh-picker-toggle" onclick="toggleGhPickerAll()">Deselect all</button>
+      <div class="gh-picker-list" id="gh-picker-list"></div>
+      <div class="gh-actions">
+        <button class="gh-btn save" id="gh-picker-confirm" onclick="confirmGhPicker()">Continue</button>
+        <button class="gh-btn" style="background:#f1f5f9;color:#475569;border:1px solid #e2e8f0" onclick="cancelGhPicker()">✕ Cancel</button>
+      </div>
     </div>
     <!-- Load-override warning (shown only when local trips exist) -->
     <div id="gh-load-warn" style="display:none">
@@ -2753,7 +2785,10 @@ function ghParseRepoPath(url) {
 // these wrappers just re-fetch the sha and retry a couple of times when that specific
 // error shows up, which resolves itself once the other write has landed.
 function isShaConflict(e) {
-  return /sha|does not match|409/i.test(e && e.message || '');
+  // Covers all of GitHub's conflict phrasings: '"sha" wasn't supplied', 'does not
+  // match', plain 409s, AND the branch-head race variant "is at <commit-sha> but
+  // expected <commit-sha>" (whose message contains no literal 'sha' at all).
+  return /sha|does not match|409|is at [0-9a-f]{7,} but expected/i.test(e && e.message || '');
 }
 // Raw GitHub sha errors ("is at 4fd4dd0… but expected 4d65b58…") are meaningless and
 // alarming to a user — translate them before they reach an alert or a review card.
@@ -4153,7 +4188,24 @@ function ghDecode(b64) {
 // exactly the kind of packet loss described in testing over Starlink.
 const GH_API_TIMEOUT_MS = 20000;
 const GH_API_MAX_ATTEMPTS = 4;
-async function ghApi(method, path, body, token, owner, repo, attempt = 1) {
+
+// GitHub's Contents API creates a commit on the branch for EVERY write. Two writes in
+// flight at the same time — e.g. replacing a photo fires the old photo's delete
+// (fire-and-forget) while the new photo's commit is still running, or the debounced
+// manifest mirror lands mid-upload — race each other for the branch head, and GitHub
+// rejects the loser with "is at <commit> but expected <commit>". No amount of per-file
+// sha care fixes that, because the conflict is on the branch, not the file. So all
+// writes are funneled through a single promise chain: one commit at a time, app-wide.
+// Reads (GETs) don't create commits and skip the queue entirely.
+let _ghWriteChain = Promise.resolve();
+function ghApi(method, path, body, token, owner, repo) {
+  if (method === 'GET') return ghApiRaw(method, path, body, token, owner, repo);
+  const run = () => ghApiRaw(method, path, body, token, owner, repo);
+  const p = _ghWriteChain.then(run, run);
+  _ghWriteChain = p.then(() => {}, () => {}); // keep the chain alive through failures
+  return p;
+}
+async function ghApiRaw(method, path, body, token, owner, repo, attempt = 1) {
   const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
   const opts = {
     method,
@@ -4174,7 +4226,7 @@ async function ghApi(method, path, body, token, owner, repo, attempt = 1) {
     // times with a short backoff before giving up.
     if (attempt < GH_API_MAX_ATTEMPTS) {
       await sleep(attempt * 700);
-      return ghApi(method, path, body, token, owner, repo, attempt + 1);
+      return ghApiRaw(method, path, body, token, owner, repo, attempt + 1);
     }
     throw new Error(`Network error reaching GitHub after ${GH_API_MAX_ATTEMPTS} attempts (${e.message || 'request failed'}) — check your connection and try again.`);
   }
@@ -4184,7 +4236,7 @@ async function ghApi(method, path, body, token, owner, repo, attempt = 1) {
     // clears on its own after a short wait. Both are worth retrying before surfacing as
     // a real error to the user.
     await sleep(attempt * 1200);
-    return ghApi(method, path, body, token, owner, repo, attempt + 1);
+    return ghApiRaw(method, path, body, token, owner, repo, attempt + 1);
   }
   const data = await resp.json();
   if (!resp.ok) throw new Error(data.message || `GitHub API error ${resp.status}`);
@@ -4197,6 +4249,8 @@ function openGHModal() {
   document.getElementById('gh-repo').value         = cfg.repo   || 'aponsin/roadtrip-planner';
   document.getElementById('gh-device-label').value = cfg.device || ghDeviceId();
   document.getElementById('gh-log').innerHTML = '';
+  cancelGhPicker();   // reset any picker left open from a previous visit
+  cancelGhLoad();     // reset any override warning left open from a previous visit
   document.getElementById('gh-modal').classList.add('open');
 }
 function closeGHModal() {
@@ -4274,7 +4328,47 @@ function ghLog(msg, type = 'info') {
   log.scrollTop = log.scrollHeight;
 }
 
-async function ghSave() {
+// ── Trip picker (shared by Save and Load so only selected trips are touched) ──
+let ghPicker = null; // { items: [{key,label,badge,badgeClass,checked}], onConfirm(keys) }
+
+function showGhPicker(title, confirmLabel, items, onConfirm) {
+  ghPicker = { items, onConfirm };
+  document.getElementById('gh-picker-title').textContent = title;
+  document.getElementById('gh-picker-confirm').textContent = confirmLabel;
+  document.getElementById('gh-picker-toggle').textContent = 'Deselect all';
+  document.getElementById('gh-picker-list').innerHTML = items.map((it, i) => `
+    <label class="gh-picker-item">
+      <input type="checkbox" data-gh-pick="${i}" ${it.checked ? 'checked' : ''}>
+      <span class="gh-picker-name">${esc(it.label)}</span>
+      ${it.badge ? `<span class="gh-picker-badge ${it.badgeClass}">${it.badge}</span>` : ''}
+    </label>`).join('');
+  document.getElementById('gh-picker').style.display = '';
+  document.getElementById('gh-actions').style.display = 'none';
+}
+function cancelGhPicker() {
+  ghPicker = null;
+  document.getElementById('gh-picker').style.display = 'none';
+  document.getElementById('gh-actions').style.display = '';
+}
+function toggleGhPickerAll() {
+  const boxes = [...document.querySelectorAll('#gh-picker-list input[data-gh-pick]')];
+  const anyChecked = boxes.some(b => b.checked);
+  boxes.forEach(b => { b.checked = !anyChecked; });
+  document.getElementById('gh-picker-toggle').textContent = anyChecked ? 'Select all' : 'Deselect all';
+}
+function confirmGhPicker() {
+  if (!ghPicker) return;
+  const chosen = [];
+  document.querySelectorAll('#gh-picker-list input[data-gh-pick]').forEach(cb => {
+    if (cb.checked) chosen.push(ghPicker.items[parseInt(cb.dataset.ghPick)].key);
+  });
+  if (!chosen.length) { ghLog('⚠ Select at least one trip first.', 'warn'); return; }
+  const fn = ghPicker.onConfirm;
+  cancelGhPicker();
+  fn(chosen);
+}
+
+function ghSave() {
   const token       = document.getElementById('gh-token').value.trim();
   const repoStr     = document.getElementById('gh-repo').value.trim();
   const deviceLabel = document.getElementById('gh-device-label').value.trim() || ghDeviceId();
@@ -4283,8 +4377,21 @@ async function ghSave() {
   const [owner, repo] = repoStr.split('/');
   ghSaveConfig({ token, repo: repoStr, device: deviceLabel });
 
-  const tripsToSave = trips.filter(t => events.some(e => e.tripId === t.id));
-  if (!tripsToSave.length) { ghLog('⚠ No trips with events to save.', 'warn'); return; }
+  const eligible = trips.filter(t => events.some(e => e.tripId === t.id));
+  if (!eligible.length) { ghLog('⚠ No trips with events to save.', 'warn'); return; }
+
+  document.getElementById('gh-log').innerHTML = '';
+  showGhPicker(
+    'Which trips should be saved to GitHub?',
+    '⬆ Save selected',
+    eligible.map(t => ({ key: t.id, label: t.name, checked: true })),
+    ids => executeGhSave(ids, token, owner, repo, repoStr, deviceLabel)
+  );
+}
+
+async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) {
+  const tripsToSave = trips.filter(t => tripIds.includes(t.id));
+  if (!tripsToSave.length) return;
 
   ghLog(`Saving ${tripsToSave.length} trip(s) to ${repoStr}/data/ … [${deviceLabel}]`);
   let saved = 0, skipped = 0, failed = 0;
@@ -4337,11 +4444,10 @@ async function ghSave() {
 let ghSlideState = null;
 let ghPendingLoad = null;
 
-function showGhLoadWarning(token, owner, repo) {
-  ghPendingLoad = { token, owner, repo };
-  const n = trips.length;
+function showGhLoadWarning(token, owner, repo, selectedNames, replaceCount) {
+  ghPendingLoad = { token, owner, repo, selectedNames };
   document.getElementById('gh-warn-text').textContent =
-    `You have ${n} trip${n !== 1 ? 's' : ''} saved locally. Loading from GitHub will replace any matching trips and add new ones. This cannot be undone.`;
+    `${replaceCount} of the selected trip${replaceCount !== 1 ? 's' : ''} will replace a trip you have locally (matched by name). This cannot be undone.`;
   document.getElementById('gh-load-warn').style.display = '';
   document.getElementById('gh-actions').style.display   = 'none';
   document.getElementById('gh-log').innerHTML = '';
@@ -4401,7 +4507,7 @@ function initGhSlider() {
       setTimeout(() => {
         const pending = ghPendingLoad;
         cancelGhLoad();
-        if (pending) executeGhLoad(pending.token, pending.owner, pending.repo);
+        if (pending) executeGhLoad(pending.token, pending.owner, pending.repo, pending.selectedNames);
       }, 350);
     } else {
       // Snap back with spring animation
@@ -4435,14 +4541,9 @@ async function ghLoad() {
   const [owner, repo] = repoStr.split('/');
   ghSaveConfig({ token, repo: repoStr });
 
-  // Gate behind warning + slider if local trips exist
-  if (trips.length > 0) { showGhLoadWarning(token, owner, repo); return; }
-  await executeGhLoad(token, owner, repo);
-}
-
-async function executeGhLoad(token, owner, repo) {
-  const repoStr = `${owner}/${repo}`;
-  ghLog(`Looking for CSV files in ${repoStr}/data/ …`);
+  // List what's on GitHub first so the user can pick exactly which trips to load —
+  // and see up front which of them would replace a local trip vs arrive as new.
+  ghLog(`Looking for trips in ${repoStr}/data/ …`);
   let listing;
   try {
     listing = await ghApi('GET', 'data', null, token, owner, repo);
@@ -4455,7 +4556,46 @@ async function executeGhLoad(token, owner, repo) {
   const files = listing.filter(f => f.name.endsWith('.csv'));
   if (!files.length) { ghLog('No .csv files found in /data/.', 'warn'); return; }
 
-  ghLog(`Found ${files.length} trip file(s). Loading…`);
+  document.getElementById('gh-log').innerHTML = '';
+  const localFilenames = new Set(trips.map(t => ghTripFilename(t)));
+  const items = files.map(f => ({
+    key: f.name,
+    label: f.name.replace(/\.csv$/, '').replace(/_/g, ' '),
+    checked: true,
+    badge: localFilenames.has(f.name) ? 'will replace local' : 'new',
+    badgeClass: localFilenames.has(f.name) ? 'replace' : 'new',
+  }));
+  showGhPicker(
+    'Which trips should be loaded from GitHub?',
+    '⬇ Load selected',
+    items,
+    names => {
+      const replaceCount = names.filter(n => localFilenames.has(n)).length;
+      // The slide-to-confirm gate only matters when something local actually gets
+      // replaced — loading brand-new trips is harmless and shouldn't need it.
+      if (replaceCount > 0) showGhLoadWarning(token, owner, repo, names, replaceCount);
+      else executeGhLoad(token, owner, repo, names);
+    }
+  );
+}
+
+async function executeGhLoad(token, owner, repo, selectedNames = null) {
+  const repoStr = `${owner}/${repo}`;
+  ghLog(`Fetching trip files from ${repoStr}/data/ …`);
+  let listing;
+  try {
+    listing = await ghApi('GET', 'data', null, token, owner, repo);
+  } catch(err) {
+    ghLog(`✗ Error listing /data/: ${err.message}`, 'error'); return;
+  }
+  if (!listing || !Array.isArray(listing)) {
+    ghLog('No /data/ folder found. Save to GitHub first to create it.', 'warn'); return;
+  }
+  let files = listing.filter(f => f.name.endsWith('.csv'));
+  if (selectedNames) files = files.filter(f => selectedNames.includes(f.name));
+  if (!files.length) { ghLog('No matching .csv files found in /data/.', 'warn'); return; }
+
+  ghLog(`Loading ${files.length} trip file(s)…`);
   let loaded = 0, replaced = 0, failed = 0;
 
   for (const file of files) {
