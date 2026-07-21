@@ -208,7 +208,7 @@ body {
 .import-summary-chip.ok       { background: #d1fae5; color: #065f46; }
 .import-summary-chip.pending  { background: #fef3c7; color: #92400e; }
 .import-summary-chip.progress { background: #dbeafe; color: #1e40af; }
-.import-progress-row, .import-review-item {
+.import-progress-row {
   display: flex; gap: 12px; align-items: center;
   padding: 9px 10px; border-radius: 9px; margin-bottom: 6px;
   background: #f8fafc; border: 1px solid #f1f5f9;
@@ -217,13 +217,21 @@ body {
   width: 52px; height: 52px; border-radius: 7px; object-fit: cover; flex-shrink: 0;
   background: #e2e8f0;
 }
-.import-review-item { flex-wrap: wrap; }
-.import-review-body { flex: 1; min-width: 160px; }
+.import-review-item {
+  padding: 10px; border-radius: 9px; margin-bottom: 8px;
+  background: #f8fafc; border: 1px solid #f1f5f9;
+}
+.import-review-body { min-width: 0; }
+.import-review-photo {
+  display: block; width: 100%; height: auto; max-height: 360px;
+  object-fit: contain; border-radius: 8px; margin-top: 8px;
+  background: #eef2f7; cursor: zoom-in;
+}
 .import-review-meta { font-size: 11px; color: #64748b; margin-bottom: 4px; }
 .import-review-status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.import-review-status.confident { color: #16a34a; }
 .import-review-status.ambiguous { color: #d97706; }
 .import-review-status.unmatched { color: #dc2626; }
-.import-review-status.overflow  { color: #7c3aed; }
 .import-review-select {
   padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 6px;
   font-size: 12px; font-family: inherit; color: #0f172a; max-width: 100%;
@@ -556,7 +564,7 @@ body {
   width: 5px; height: 36px; border-radius: 3px; flex-shrink: 0;
 }
 .tviz-title { font-size: 18px; font-weight: 700; color: #0f172a; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tviz-refresh-btn, .tviz-print-btn, .tviz-import-btn, .tviz-close { flex-shrink: 0; }
+.tviz-refresh-btn, .tviz-print-btn, .tviz-close { flex-shrink: 0; }
 .tviz-close {
   width: 28px; height: 28px; border-radius: 6px;
   background: none; border: none; cursor: pointer;
@@ -692,19 +700,12 @@ body {
 }
 .tviz-refresh-btn:hover { background: #e2e8f0; color: #0f172a; }
 .tviz-refresh-btn:disabled { opacity: .5; cursor: default; }
-.tviz-import-btn {
-  display: flex; align-items: center; gap: 5px;
-  padding: 5px 11px; border-radius: 7px; position: relative;
-  background: #eff6ff; border: 1px solid #bfdbfe; cursor: pointer;
-  font-size: 12px; font-weight: 600; color: #1d4ed8;
-  transition: all .15s;
-}
-.tviz-import-btn:hover { background: #dbeafe; }
-.tviz-import-badge {
+.trip-act-btn.import-photos-btn { position: relative; }
+.trip-act-badge {
+  position: absolute; top: -4px; right: -4px;
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
-  background: #dc2626; color: #fff; font-size: 10px; font-weight: 700;
-  margin-left: 2px;
+  min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px;
+  background: #dc2626; color: #fff; font-size: 8px; font-weight: 700; line-height: 1;
 }
 @media (max-width: 680px) {
   :root { --lbl-w: 56px; }
@@ -791,7 +792,7 @@ body {
     margin-top: 18px;
   }
   .tviz-ev { break-inside: avoid; page-break-inside: avoid; }
-  .tviz-close, .tviz-print-btn, .tviz-import-btn { display: none !important; }
+  .tviz-close, .tviz-print-btn { display: none !important; }
   .tviz-map-btn { margin: 12px 0 0 !important; }
   a { color: #0f172a !important; }
 }
@@ -1137,12 +1138,12 @@ body.read-only .btn-new-event,
 body.read-only .btn-gh-sync,
 body.read-only .btn-new-trip,
 body.read-only .btn-import-trip,
-body.read-only .tviz-import-btn,
 body.read-only .pop-btn { display: none !important; }
 /* In read-only mode, hide rename / delete / share buttons but keep viz + export */
 body.read-only .trip-act-btn.del,
 body.read-only .trip-act-btn.rename,
-body.read-only .trip-act-btn.share-btn { display: none !important; }
+body.read-only .trip-act-btn.share-btn,
+body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
 
 /* ── SHARE MODAL ────────────────────────────────── */
 .gh-modal {
@@ -1468,15 +1469,6 @@ body.read-only .trip-act-btn.share-btn { display: none !important; }
     <div class="tviz-header">
       <div class="tviz-color-bar" id="tviz-color-bar"></div>
       <div class="tviz-title" id="tviz-title"></div>
-      <button class="tviz-import-btn" id="tviz-import-btn" onclick="openImportModal(tvizCurrentTripId)" title="Import photos from your camera roll">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="1.5" y="3.5" width="13" height="10" rx="1.3" stroke="currentColor" stroke-width="1.3"/>
-          <circle cx="5.2" cy="7" r="1.2" stroke="currentColor" stroke-width="1.2"/>
-          <path d="M2 12l3.6-3.6a1 1 0 0 1 1.4 0L9.5 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-          <path d="M8.5 11.2l1.6-1.6a1 1 0 0 1 1.4 0L14 12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-        </svg>
-        Import Photos<span class="tviz-import-badge" id="tviz-import-badge" style="display:none"></span>
-      </button>
       <button class="tviz-print-btn" onclick="printTripViz()" title="Print / Save as PDF">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect x="3" y="1" width="10" height="7" rx="1" stroke="currentColor" stroke-width="1.4"/>
@@ -2034,6 +2026,7 @@ function renderSidebar() {
            onblur="finishRename(${t.id})"
            onkeydown="rnKey(event,${t.id})">`
       : `<span class="trip-name" title="${esc(t.name)}">${esc(t.name)}</span>`;
+    const tripPendingCount = getPendingList(t.id).filter(p => p.status !== 'processing').length;
 
     return `
       <div class="trip-item">
@@ -2043,6 +2036,10 @@ function renderSidebar() {
         ${nameHTML}
         <div class="trip-acts">
           <button class="trip-act-btn" onclick="openTripViz(${t.id})" title="Trip summary"><svg width="13" height="10" viewBox="0 0 13 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 5C1 5 3.2 1.5 6.5 1.5C9.8 1.5 12 5 12 5C12 5 9.8 8.5 6.5 8.5C3.2 8.5 1 5 1 5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="6.5" cy="5" r="1.6" fill="currentColor"/></svg></button>
+          <button class="trip-act-btn import-photos-btn" onclick="openImportModal(${t.id})" title="Import photos${tripPendingCount ? ` (${tripPendingCount} to review)` : ''}">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="1.5" y="3.5" width="13" height="10" rx="1.3" stroke="currentColor" stroke-width="1.3"/><circle cx="5.2" cy="7" r="1.2" stroke="currentColor" stroke-width="1.2"/><path d="M2 12l3.6-3.6a1 1 0 0 1 1.4 0L9.5 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M8.5 11.2l1.6-1.6a1 1 0 0 1 1.4 0L14 12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            ${tripPendingCount ? `<span class="trip-act-badge">${tripPendingCount}</span>` : ''}
+          </button>
           <button class="trip-act-btn share-btn" onclick="ghShareTrip(${t.id})" title="Share trip"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="9.5" cy="2.5" r="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="9.5" cy="9.5" r="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="2.5" cy="6" r="1.5" stroke="currentColor" stroke-width="1.3"/><line x1="4" y1="6" x2="8" y2="3.2" stroke="currentColor" stroke-width="1.3"/><line x1="4" y1="6" x2="8" y2="8.8" stroke="currentColor" stroke-width="1.3"/></svg></button>
           <button class="trip-act-btn" onclick="exportTrip(${t.id})" title="Export to CSV">⬇</button>
           <button class="trip-act-btn rename" onclick="startRename(${t.id})" title="Rename">✏</button>
@@ -2133,7 +2130,6 @@ function openTripViz(tripId) {
   const trip = trips.find(t => t.id === tripId);
   if (!trip) return;
   tvizCurrentTripId = tripId;
-  updateImportBadge();
   const tripEvs = events.filter(e => e.tripId === tripId)
                         .sort((a, b) => a.start - b.start);
   if (!tripEvs.length) { alert('This trip has no events to display.'); return; }
@@ -2412,10 +2408,27 @@ function openPhotoLightbox(evId, index) {
   const ev = events.find(e => e.id === evId);
   if (!ev || !ev.photos || !ev.photos.length) return;
   _lightboxEvId = evId;
-  _lightboxPhotos = ev.photos.slice();
+  openLightboxForPhotos(ev.photos, index);
+}
+
+// Lower-level opener that doesn't require an event — used for photos still in the
+// import review queue that aren't attached to anything yet.
+function openLightboxForPhotos(urls, index) {
+  if (!urls || !urls.length) return;
+  _lightboxPhotos = urls.slice();
   _lightboxIndex = index;
   renderLightbox();
   document.getElementById('photo-lightbox').classList.add('open');
+}
+
+// Full-screen a single photo still sitting in the import review queue.
+function openImportPhotoLightbox(id) {
+  const list = getPendingList(importActiveTripId);
+  const entry = list.find(p => p.id === id);
+  const src = entry && (entry.url || entry.previewDataUrl);
+  if (!src) return;
+  _lightboxEvId = null;
+  openLightboxForPhotos([src], 0);
 }
 
 function renderLightbox() {
@@ -2674,22 +2687,34 @@ function ghParseRepoPath(url) {
   const m = url.match(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/[^/]+\/(.+)$/);
   return m ? { owner: m[1], repo: m[2], path: m[3] } : null;
 }
+// Idempotent/retry-safe: if a previous attempt got partway through (e.g. the PUT to
+// the final path succeeded but the staging DELETE failed on a flaky connection), a
+// retry must not blindly PUT again — GitHub's Contents API rejects overwriting an
+// existing file without its "sha", which is exactly the "sha wasn't supplied" error
+// this was producing. So we always check what's already there before acting.
 async function ghCommitStagedPhoto(stagingUrl, finalFilename) {
   const cfg = ghConfig();
   const loc = ghParseRepoPath(stagingUrl);
   if (!loc || !cfg.token) throw new Error('Cannot commit photo — missing GitHub config or invalid URL.');
-  const existing = await ghApi('GET', loc.path, null, cfg.token, loc.owner, loc.repo);
-  if (!existing) throw new Error('Staged photo no longer exists on GitHub.');
   const toPath = `media/${finalFilename}`;
-  await ghApi('PUT', toPath, {
-    message: `Commit imported photo ${finalFilename}`,
-    content: existing.content.replace(/\n/g, ''),
-  }, cfg.token, loc.owner, loc.repo);
-  await ghApi('DELETE', loc.path, {
-    message: `Remove staged photo ${loc.path}`,
-    sha: existing.sha,
-  }, cfg.token, loc.owner, loc.repo);
-  return `https://raw.githubusercontent.com/${loc.owner}/${loc.repo}/main/${toPath}`;
+  const finalUrl = `https://raw.githubusercontent.com/${loc.owner}/${loc.repo}/main/${toPath}`;
+
+  const existingFinal = await ghApi('GET', toPath, null, cfg.token, loc.owner, loc.repo);
+  if (!existingFinal) {
+    const existingStaged = await ghApi('GET', loc.path, null, cfg.token, loc.owner, loc.repo);
+    if (!existingStaged) throw new Error('Staged photo no longer exists on GitHub.');
+    await ghApi('PUT', toPath, {
+      message: `Commit imported photo ${finalFilename}`,
+      content: existingStaged.content.replace(/\n/g, ''),
+    }, cfg.token, loc.owner, loc.repo);
+  }
+  // Clean up the staging copy. Re-checking here (rather than reusing an earlier GET)
+  // means this step alone can be safely retried too.
+  const stagedNow = await ghApi('GET', loc.path, null, cfg.token, loc.owner, loc.repo);
+  if (stagedNow) {
+    await ghApi('DELETE', loc.path, { message: `Remove staged photo ${loc.path}`, sha: stagedNow.sha }, cfg.token, loc.owner, loc.repo);
+  }
+  return finalUrl;
 }
 // Discard a staged photo entirely (rejected during review, or import abandoned)
 async function ghDiscardStagedPhoto(stagingUrl) {
@@ -2809,16 +2834,33 @@ const IMPORT_TIME_PAD_H = {
   transportation: 2, working: 1, blocked: 1, misc: 2,
 };
 const IMPORT_TIME_FALLOFF_H   = 3;    // extra hours beyond the padded window before time-score hits 0
-const IMPORT_CONFIDENT_SCORE  = 0.6;  // min combined score to auto-commit without asking
+const IMPORT_CONFIDENT_SCORE  = 0.6;  // min combined score to label a match "confident" (still requires user confirmation)
 const IMPORT_CONFIDENT_MARGIN = 0.15; // min lead over the 2nd-best event to count as "confident"
 const IMPORT_UNMATCHED_SCORE  = 0.25; // below this against every event = no real match at all
+const IMPORT_MAX_BATCH        = 50;   // max photos per import batch — large batches can stall on iPhone
+                                       // while iOS downloads full-resolution originals from iCloud one at a time
+const IMPORT_FILE_TIMEOUT_MS  = 45000; // per-photo ceiling (hash/EXIF/resize/upload combined) — if a single
+                                        // photo hangs (e.g. a slow iCloud download), skip it instead of
+                                        // freezing the rest of the batch
 
 let importPendingByTrip   = {}; // { [tripId]: [ {id,url,filename,previewDataUrl,takenAt,lat,lon,dateSource,hash,status,matches,committedEventId} ] }
 let photoHashRegistry     = {}; // { [tripId]: { [sha256hex]: finalUrl } } — for duplicate detection
 let importActiveTripId    = null;
 let importBusy            = false;
 let importLastSkippedCount = 0;
+let importBatchIndex      = 0; // 1-based position of the photo currently being processed in this batch
+let importBatchTotal      = 0;
 let pendingPhotoForNewEvent = null; // { entryId, tripId } while the "new event from photo" form is open
+let importReplacePicker = null; // { entryId, eventId } while showing the "pick a photo to swap out" sub-view
+
+// Race a promise against a timeout so one hung file (e.g. a photo still downloading
+// from iCloud) can never block the rest of the import batch indefinitely.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s — the photo may still be downloading from iCloud. Try selecting it again on its own.`)), ms)),
+  ]);
+}
 
 function loadPendingImports() {
   try { importPendingByTrip = JSON.parse(localStorage.getItem(PENDING_IMPORTS_KEY) || '{}'); }
@@ -2843,7 +2885,7 @@ function getPendingList(tripId) {
 }
 function persistPendingImports(tripId) {
   localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(importPendingByTrip));
-  updateImportBadge();
+  renderSidebar(); // keeps the per-trip "photos to review" badge live
   mirrorPendingManifest(tripId);
 }
 
@@ -3029,16 +3071,7 @@ function discardAllPendingImports(tripId) {
   localStorage.setItem(PENDING_IMPORTS_KEY, JSON.stringify(importPendingByTrip));
   savePhotoHashRegistry();
   mirrorPendingManifest(tripId);
-  updateImportBadge();
-}
-
-function updateImportBadge() {
-  const badge = document.getElementById('tviz-import-badge');
-  if (!badge) return;
-  const list = tvizCurrentTripId != null ? getPendingList(tvizCurrentTripId) : [];
-  const n = list.filter(p => p.status !== 'processing').length;
-  badge.textContent = n;
-  badge.style.display = n > 0 ? '' : 'none';
+  renderSidebar();
 }
 
 // ── Import modal ──────────────────────────────────────────────────────────────
@@ -3060,6 +3093,12 @@ async function handleImportFilesSelected(fileList) {
   const files = Array.from(fileList || []);
   document.getElementById('import-file-input').value = '';
   if (!files.length || !importActiveTripId) return;
+
+  if (files.length > IMPORT_MAX_BATCH) {
+    alert(`Please select ${IMPORT_MAX_BATCH} photos or fewer at a time (you picked ${files.length}). Big batches can look stuck on iPhone while iCloud downloads full-resolution originals one by one — import in a few smaller batches instead.`);
+    return;
+  }
+
   const tripId = importActiveTripId;
   const trip = trips.find(t => t.id === tripId);
   if (!trip) return;
@@ -3069,24 +3108,23 @@ async function handleImportFilesSelected(fileList) {
 
   importBusy = true;
   importLastSkippedCount = 0;
+  importBatchIndex = 0;
+  importBatchTotal = files.length;
   renderImportModal();
   await warmEventCoordsForImport(tripEvs);
 
-  const committedCounts = new Map(); // eventId -> photo count already used, seeded lazily
-  const countFor = ev => {
-    if (!committedCounts.has(ev.id)) committedCounts.set(ev.id, (ev.photos || []).length);
-    return committedCounts.get(ev.id);
-  };
-  let skipped = 0, anyCommitted = false;
+  let skipped = 0;
 
   for (const file of files) {
-    const hash = await sha256HexOfFile(file);
-    if (findPhotoHashUrl(tripId, hash) || list.some(p => p.hash === hash)) { skipped++; continue; }
+    importBatchIndex++;
 
+    // Add a placeholder immediately (before the possibly-slow hash step) so progress
+    // is visible right away — otherwise a photo stuck waiting on an iCloud download
+    // looks identical to the whole batch being frozen.
     const entry = {
       id: `imp-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
       filename: null, url: null, previewDataUrl: null,
-      takenAt: null, lat: null, lon: null, dateSource: 'none', hash,
+      takenAt: null, lat: null, lon: null, dateSource: 'none', hash: null,
       status: 'processing', matches: [],
     };
     list.push(entry);
@@ -3094,33 +3132,34 @@ async function handleImportFilesSelected(fileList) {
     renderImportModal();
 
     try {
-      const meta = await extractPhotoMeta(file);
+      const hash = await withTimeout(sha256HexOfFile(file), IMPORT_FILE_TIMEOUT_MS, 'Reading photo');
+      entry.hash = hash;
+      if (findPhotoHashUrl(tripId, hash) || list.some(p => p !== entry && p.hash === hash)) {
+        skipped++;
+        const idx = list.indexOf(entry);
+        if (idx !== -1) list.splice(idx, 1);
+        persistPendingImports(tripId);
+        renderImportModal();
+        continue;
+      }
+
+      const meta = await withTimeout(extractPhotoMeta(file), IMPORT_FILE_TIMEOUT_MS, 'Reading photo metadata');
       Object.assign(entry, meta);
-      const dataUrl = await resizeImageFile(file);
+      const dataUrl = await withTimeout(resizeImageFile(file), IMPORT_FILE_TIMEOUT_MS, 'Resizing photo');
       entry.previewDataUrl = dataUrl;
       renderImportModal();
       const base64 = dataUrl.split(',')[1];
       const filename = `import-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.jpg`;
       entry.filename = filename;
-      entry.url = await ghUploadImage(base64, filename, `${IMPORT_STAGING_FOLDER}/${tripSlug}`);
+      entry.url = await withTimeout(ghUploadImage(base64, filename, `${IMPORT_STAGING_FOLDER}/${tripSlug}`), IMPORT_FILE_TIMEOUT_MS, 'Uploading photo');
       entry.previewDataUrl = null;
 
+      // Every photo goes to manual review — nothing attaches to an event without
+      // the user explicitly confirming it (Section 23.3/23.5 of the spec).
       const ranked = await scorePhotoAgainstEvents(entry, tripEvs);
       const { status, matches } = classifyMatches(ranked);
       entry.matches = matches;
-
-      if (status === 'confident') {
-        const targetEv = tripEvs.find(e => e.id === matches[0].eventId);
-        if (countFor(targetEv) < PHOTO_MAX_COUNT) {
-          await commitPendingPhoto(entry, targetEv, tripId, list);
-          committedCounts.set(targetEv.id, countFor(targetEv) + 1);
-          anyCommitted = true;
-        } else {
-          entry.status = 'overflow'; // confident match, but that event's photo cap is already full
-        }
-      } else {
-        entry.status = status; // 'ambiguous' or 'unmatched'
-      }
+      entry.status = status; // 'confident' (pre-selected suggestion), 'ambiguous', or 'unmatched'
     } catch (e) {
       entry.status = 'error';
       entry.errorMsg = e.message;
@@ -3131,11 +3170,9 @@ async function handleImportFilesSelected(fileList) {
   }
 
   importBusy = false;
+  importBatchIndex = 0;
+  importBatchTotal = 0;
   importLastSkippedCount = skipped;
-  if (anyCommitted) {
-    save();
-    if (document.getElementById('trip-viz-overlay')?.classList.contains('open')) openTripViz(tripId);
-  }
   renderImportModal();
 }
 
@@ -3145,11 +3182,15 @@ function fmtImportDate(ts) {
 }
 
 function renderImportReviewItem(p, tripEvs) {
+  const topScore = p.matches && p.matches[0] ? Math.round(p.matches[0].score * 100) : null;
   const statusLabel = {
-    ambiguous: 'Multiple possible matches', unmatched: 'No confident match',
-    overflow: `Matched event already has ${PHOTO_MAX_COUNT} photos`, error: 'Something went wrong',
+    confident: `Suggested match — ${topScore}% confidence`,
+    ambiguous: `Multiple possible matches — best is ${topScore}% confidence`,
+    unmatched: 'No confident match',
+    error: p.errorMsg || 'Something went wrong',
   }[p.status] || p.status;
   const suggestedIds = new Set((p.matches || []).map(m => m.eventId));
+  const scoreByEventId = new Map((p.matches || []).map(m => [m.eventId, m.score]));
   const suggested = (p.matches || []).map(m => tripEvs.find(e => e.id === m.eventId)).filter(Boolean);
   const others = tripEvs.filter(e => !suggestedIds.has(e.id));
   let dateLabel = 'No date info';
@@ -3157,7 +3198,11 @@ function renderImportReviewItem(p, tripEvs) {
   else if (p.dateSource === 'file') dateLabel = fmtImportDate(p.takenAt) + ' (file date, no EXIF)';
   const gpsLabel = p.lat != null ? '📍' : '';
 
-  const opt = e => `<option value="${e.id}">${esc(e.title)} (${CATS[e.category]?.emoji || ''})</option>`;
+  const opt = e => {
+    const s = scoreByEventId.get(e.id);
+    const scoreLabel = s != null ? ` — ${Math.round(s * 100)}%` : '';
+    return `<option value="${e.id}">${esc(e.title)} (${CATS[e.category]?.emoji || ''})${scoreLabel}</option>`;
+  };
   const options = [
     `<option value="">Choose an event…</option>`,
     suggested.length ? `<optgroup label="Suggested">${suggested.map(opt).join('')}</optgroup>` : '',
@@ -3166,7 +3211,6 @@ function renderImportReviewItem(p, tripEvs) {
 
   return `
     <div class="import-review-item" data-import-id="${p.id}">
-      <img class="import-thumb" src="${p.url || p.previewDataUrl || ''}" onerror="this.style.visibility='hidden'">
       <div class="import-review-body">
         <div class="import-review-status ${p.status}">${esc(statusLabel)}</div>
         <div class="import-review-meta">${esc(dateLabel)} ${gpsLabel}</div>
@@ -3176,6 +3220,7 @@ function renderImportReviewItem(p, tripEvs) {
           <button type="button" class="import-btn-sm" onclick="createEventFromImportPhoto('${p.id}')">New event from photo</button>
           <button type="button" class="import-btn-sm danger" onclick="discardImportPhoto('${p.id}')">Discard</button>
         </div>
+        <img class="import-review-photo" src="${p.url || p.previewDataUrl || ''}" onclick="openImportPhotoLightbox('${p.id}')" onerror="this.style.display='none'" title="Click to view full-screen">
       </div>
     </div>`;
 }
@@ -3186,23 +3231,26 @@ function renderImportModal() {
   const list = getPendingList(importActiveTripId);
   const tripEvs = events.filter(e => e.tripId === importActiveTripId).sort((a, b) => a.start - b.start);
   const processing = list.filter(p => p.status === 'processing');
-  const needsReview = list.filter(p => ['ambiguous', 'unmatched', 'overflow', 'error'].includes(p.status));
+  const suggested = list.filter(p => p.status === 'confident');
+  const needsReview = list.filter(p => ['ambiguous', 'unmatched', 'error'].includes(p.status));
+  const reviewTotal = suggested.length + needsReview.length;
 
   let html = '';
   if (!list.length && !importBusy) {
     html = `
       <div class="import-picker">
         <div class="import-picker-icon">📷</div>
-        <div class="import-picker-hint">Pick a batch of photos from your camera roll — we'll match each one to the closest event by date and location, upload the confident matches automatically, and only ask you about the rest.</div>
+        <div class="import-picker-hint">Pick up to ${IMPORT_MAX_BATCH} photos from your camera roll at a time — we'll suggest the closest event for each one by date and location, but every photo waits for your confirmation before it's attached to anything.</div>
         <button type="button" class="import-pick-btn" onclick="document.getElementById('import-file-input').click()">Select Photos</button>
       </div>`;
   } else {
     const chips = [];
     if (importBusy && !list.length) chips.push(`<span class="import-summary-chip progress">Preparing…</span>`);
-    if (processing.length) chips.push(`<span class="import-summary-chip progress">${processing.length} processing…</span>`);
-    if (needsReview.length) chips.push(`<span class="import-summary-chip pending">${needsReview.length} need review</span>`);
+    if (importBusy && importBatchTotal > 0) chips.push(`<span class="import-summary-chip progress">Photo ${Math.min(importBatchIndex, importBatchTotal)} of ${importBatchTotal}</span>`);
+    else if (processing.length) chips.push(`<span class="import-summary-chip progress">${processing.length} processing…</span>`);
+    if (reviewTotal) chips.push(`<span class="import-summary-chip pending">${reviewTotal} to review</span>`);
     if (importLastSkippedCount > 0) chips.push(`<span class="import-summary-chip ok">${importLastSkippedCount} duplicate${importLastSkippedCount > 1 ? 's' : ''} skipped</span>`);
-    if (!processing.length && !needsReview.length && !importBusy) chips.push(`<span class="import-summary-chip ok">All caught up ✓</span>`);
+    if (!processing.length && !reviewTotal && !importBusy) chips.push(`<span class="import-summary-chip ok">All caught up ✓</span>`);
     html += `<div class="import-summary">${chips.join('')}</div>`;
 
     if (processing.length) {
@@ -3213,8 +3261,12 @@ function renderImportModal() {
           <div class="import-review-body"><div class="import-review-meta">Uploading &amp; matching…</div></div>
         </div>`).join('');
     }
+    if (suggested.length) {
+      html += `<div class="import-section-title">Suggested matches — tap Assign to confirm</div>`;
+      html += suggested.map(p => renderImportReviewItem(p, tripEvs)).join('');
+    }
     if (needsReview.length) {
-      html += `<div class="import-section-title">Needs your review</div>`;
+      html += `<div class="import-section-title">Needs a closer look</div>`;
       html += needsReview.map(p => renderImportReviewItem(p, tripEvs)).join('');
     }
     if (!list.length && !importBusy) {
@@ -3225,13 +3277,12 @@ function renderImportModal() {
   body.innerHTML = html;
 
   // Pre-select the top suggested match for anything that already has one
-  needsReview.forEach(p => {
+  [...suggested, ...needsReview].forEach(p => {
     if (p.status !== 'unmatched' && p.matches && p.matches[0]) {
       const sel = document.getElementById('import-select-' + p.id);
       if (sel) sel.value = p.matches[0].eventId;
     }
   });
-  updateImportBadge();
 }
 
 async function confirmImportAssignment(id) {
