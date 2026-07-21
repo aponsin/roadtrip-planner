@@ -2590,10 +2590,12 @@ function closePhotoLightbox(e) {
 }
 
 async function fetchLegRoute(dep, arr) {
-  // dep/arr are {lat, lon} objects from geocode()
+  // dep/arr are {lat, lon} objects from geocode(). fetchWithTimeout, not raw fetch:
+  // this also runs during photo-import warm-up, where an unbounded hang would block
+  // the whole batch (same failure class as the geocode hang fixed earlier).
   try {
     const url = `https://router.project-osrm.org/route/v1/driving/${dep.lon},${dep.lat};${arr.lon},${arr.lat}?geometries=geojson&overview=full`;
-    const r = await fetch(url);
+    const r = await fetchWithTimeout(url);
     const d = await r.json();
     if (d.code !== 'Ok' || !d.routes?.length) return null;
     return d.routes[0].geometry; // GeoJSON LineString
@@ -3311,6 +3313,12 @@ async function warmEventCoordsForImport(tripEvs) {
   for (const ev of tripEvs) {
     try { await withTimeout(getEventCoord(ev), GEOCODE_TIMEOUT_MS + 2000, 'Locating event'); }
     catch (_) {}
+    // Also warm each driving leg's route polyline (usually already cached by the trip
+    // maps) so route-aware location scoring doesn't fetch per-photo mid-batch.
+    if (ev.category === 'driving') {
+      try { await withTimeout(getDrivingRouteGeometry(ev), GEOCODE_TIMEOUT_MS + 2000, 'Fetching route'); }
+      catch (_) {}
+    }
   }
 }
 
@@ -3321,12 +3329,71 @@ function timeScoreForEvent(takenAt, ev) {
   const outsideMs = takenAt < start ? (start - takenAt) : (takenAt - end);
   return Math.max(0, 1 - outsideMs / (IMPORT_TIME_FALLOFF_H * 3600000));
 }
-function locationScoreForCoord(lat, lon, coord) {
-  if (coord == null || lat == null || lon == null) return 0.6; // neutral — lean on time+category instead
-  const d = distanceMiles(lat, lon, coord.lat, coord.lon);
+function locScoreFromDistance(d) {
   if (d <= 0.5) return 1;
   if (d >= 10) return 0;
   return 1 - (d - 0.5) / 9.5;
+}
+function locationScoreForCoord(lat, lon, coord) {
+  if (coord == null || lat == null || lon == null) return 0.6; // neutral — lean on time+category instead
+  return locScoreFromDistance(distanceMiles(lat, lon, coord.lat, coord.lon));
+}
+
+// ── Route-aware location scoring for driving legs ─────────────────────────────
+// A single midpoint is a terrible stand-in for a driving leg: on a long or winding
+// route, a photo taken at a viewpoint ON the road can be 100+ miles from the
+// straight-line midpoint and score zero. The trip-summary maps already fetch each
+// leg's real road geometry from OSRM (a GeoJSON polyline, cached 7 days) — so score
+// driving photos by their distance to the NEAREST POINT ON THE ACTUAL ROUTE instead.
+async function getDrivingRouteGeometry(ev) {
+  if (ev.category !== 'driving' || !ev.departure || !ev.arrival) return null;
+  const routeKey = ev.departure + '|' + ev.arrival;
+  if (!(routeKey in _routeCache)) {
+    // Reuses the same geocode + route fetch (and caches) the leg maps use
+    const depGeo = _geoCache[ev.departure] ?? (_geoCache[ev.departure] = await geocode(ev.departure).catch(() => null));
+    const arrGeo = _geoCache[ev.arrival]   ?? (_geoCache[ev.arrival]   = await geocode(ev.arrival).catch(() => null));
+    _saveGeoCache();
+    _routeCache[routeKey] = (depGeo && arrGeo) ? await fetchLegRoute(depGeo, arrGeo) : null;
+    _saveRouteCache();
+  }
+  return _routeCache[routeKey] || null;
+}
+
+// Minimum distance (miles) from a point to a GeoJSON LineString, using proper
+// point-to-segment projection on a local equirectangular plane — vertex-only distance
+// would overshoot on long straight highway stretches where OSRM thins its points.
+function distanceToRouteMiles(lat, lon, geometry) {
+  const coords = geometry && geometry.coordinates;
+  if (!coords || coords.length < 2) return Infinity;
+  const cosLat = Math.cos(lat * Math.PI / 180);
+  const toXY = c => [(c[0] - lon) * cosLat, c[1] - lat]; // degrees on a local flat plane
+  let minSq = Infinity;
+  let prev = toXY(coords[0]);
+  for (let i = 1; i < coords.length; i++) {
+    const cur = toXY(coords[i]);
+    const dx = cur[0] - prev[0], dy = cur[1] - prev[1];
+    const segSq = dx * dx + dy * dy;
+    // Project the photo (origin) onto the segment, clamped to its ends
+    const t = segSq ? Math.max(0, Math.min(1, -(prev[0] * dx + prev[1] * dy) / segSq)) : 0;
+    const px = prev[0] + t * dx, py = prev[1] + t * dy;
+    const dSq = px * px + py * py;
+    if (dSq < minSq) minSq = dSq;
+    prev = cur;
+  }
+  return Math.sqrt(minSq) * 69.09; // degrees → miles (1° latitude ≈ 69.09 mi)
+}
+
+// Location score for any event: driving legs measure against the real route polyline
+// (falling back to the midpoint approach if no route could be fetched), everything
+// else against its single geocoded coordinate.
+async function locationScoreForEvent(meta, ev) {
+  if (meta.lat == null || meta.lon == null) return 0.6; // neutral — lean on time+category instead
+  if (ev.category === 'driving') {
+    const geom = await getDrivingRouteGeometry(ev);
+    if (geom) return locScoreFromDistance(distanceToRouteMiles(meta.lat, meta.lon, geom));
+  }
+  const coord = await getEventCoord(ev);
+  return locationScoreForCoord(meta.lat, meta.lon, coord);
 }
 
 // How much to trust a photo's own EXIF metadata. Photos re-saved from WhatsApp,
@@ -3358,8 +3425,7 @@ async function scorePhotoAgainstEvents(meta, tripEvs) {
   const results = [];
   for (const ev of tripEvs) {
     const timeScore = meta.takenAt != null ? timeScoreForEvent(meta.takenAt, ev) : 0.5;
-    const coord = await getEventCoord(ev);
-    const locScore = locationScoreForCoord(meta.lat, meta.lon, coord);
+    const locScore = await locationScoreForEvent(meta, ev);
     const weight = IMPORT_CATEGORY_WEIGHT[ev.category] ?? 0.6;
     results.push({ eventId: ev.id, score: (timeScore * 0.6 + locScore * 0.4) * weight * reliability });
   }
