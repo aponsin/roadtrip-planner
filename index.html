@@ -1593,6 +1593,24 @@ const _geoCache  = {}; // address string → {lat,lon}
 const _routeCache = {}; // "dep|arr" → GeoJSON geometry or null
 let   _activeLegMapId = null; // currently interactive map evId
 
+const GEOCODE_TIMEOUT_MS = 12000; // ceiling for a single geocoding request
+// A plain fetch() with no signal can hang indefinitely on a flaky connection — with
+// nothing timing it out, this was the actual cause of bulk photo import appearing to
+// freeze before even the first photo: warmEventCoordsForImport() geocodes every event's
+// address up front, and a single stuck geocode call blocked the entire batch before any
+// photo processing could start, regardless of whether the photos themselves were ready.
+// Using AbortController (not just Promise.race) also actually cancels the network
+// request instead of leaving it dangling in the background.
+async function fetchWithTimeout(url, options, ms = GEOCODE_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...(options || {}), signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── MAP CACHE (localStorage persistence) ───────────────────────────────────
 const GEO_TTL   = 30 * 24 * 60 * 60 * 1000; // geocodes: 30 days
 const ROUTE_TTL =  7 * 24 * 60 * 60 * 1000; // routes:    7 days
@@ -3118,7 +3136,13 @@ async function getEventCoord(ev) {
 // Pre-warm coordinates for every event in a trip once per import session, so scoring
 // each photo afterward is instant instead of geocoding on the fly one at a time.
 async function warmEventCoordsForImport(tripEvs) {
-  for (const ev of tripEvs) { try { await getEventCoord(ev); } catch (_) {} }
+  // Belt-and-suspenders on top of fetchWithTimeout: even if some future code path in
+  // here ends up awaiting something with no timeout of its own, this ensures one bad
+  // event can never block every photo in the batch from ever starting.
+  for (const ev of tripEvs) {
+    try { await withTimeout(getEventCoord(ev), GEOCODE_TIMEOUT_MS + 2000, 'Locating event'); }
+    catch (_) {}
+  }
 }
 
 function timeScoreForEvent(takenAt, ev) {
@@ -4959,7 +4983,7 @@ function initAutocomplete(inputId, onSelect) {
 
 async function acFetch(inputId, q, onSelect) {
   try {
-    const r = await fetch(
+    const r = await fetchWithTimeout(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6&addressdetails=1`,
       { headers: { 'Accept-Language': 'en' } }
     );
@@ -5025,19 +5049,19 @@ async function geocode(address) {
 
 async function geocodeNominatim(q) {
   try {
-    const r = await fetch(
+    const r = await fetchWithTimeout(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`,
       { headers: { 'Accept-Language': 'en' } }
     );
     if (!r.ok) return null;
     const d = await r.json();
     return d.length ? { lat: parseFloat(d[0].lat), lon: parseFloat(d[0].lon) } : null;
-  } catch (_) { return null; }
+  } catch (_) { return null; } // includes AbortError from a timed-out request
 }
 
 async function geocodePhoton(q) {
   try {
-    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1`);
+    const r = await fetchWithTimeout(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1`);
     if (!r.ok) return null;
     const d = await r.json();
     if (d.features?.length) {
@@ -5045,7 +5069,7 @@ async function geocodePhoton(q) {
       return { lat, lon };
     }
     return null;
-  } catch (_) { return null; }
+  } catch (_) { return null; } // includes AbortError from a timed-out request
 }
 
 async function fetchRoute() {
