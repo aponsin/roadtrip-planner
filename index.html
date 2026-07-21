@@ -3282,12 +3282,15 @@ async function handleImportFilesSelected(fileList) {
   renderImportModal();
   await warmEventCoordsForImport(tripEvs);
 
-  for (const file of files) {
-    importBatchIndex++;
-
-    // Add a placeholder immediately (before the possibly-slow hash step) so progress
-    // is visible right away — otherwise a photo stuck waiting on an iCloud download
-    // looks identical to the whole batch being frozen.
+  // Register a placeholder for every selected file up front, before any per-file async
+  // work starts, and persist the whole batch immediately. If this loop never finishes —
+  // e.g. the tab is reloaded, or iOS evicts the page under memory pressure while a big
+  // batch of iCloud originals downloads — files not yet reached used to simply vanish
+  // with no record at all (the entry for file N wasn't created until file N's turn came
+  // up). Now every file the user selected is guaranteed a persisted entry, so
+  // sweepOrphanedImportEntries() can surface an "interrupted" review item for anything
+  // that didn't finish, instead of that photo silently never being offered for review.
+  const pairs = files.map(file => {
     const entry = {
       id: `imp-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
       filename: null, url: null, previewDataUrl: null,
@@ -3296,9 +3299,13 @@ async function handleImportFilesSelected(fileList) {
       status: 'processing', matches: [],
     };
     list.push(entry);
-    persistPendingImports(tripId);
-    renderImportModal();
+    return { file, entry };
+  });
+  persistPendingImports(tripId);
+  renderImportModal();
 
+  for (const { file, entry } of pairs) {
+    importBatchIndex++;
     try {
       const hash = await withTimeout(sha256HexOfFile(file), IMPORT_FILE_TIMEOUT_MS, 'Reading photo');
       entry.hash = hash;
@@ -3530,7 +3537,7 @@ function renderImportModal() {
     html = `
       <div class="import-picker">
         <div class="import-picker-icon">📷</div>
-        <div class="import-picker-hint">Pick up to ${IMPORT_MAX_BATCH} photos from your camera roll at a time — we'll suggest the closest event for each one by date and location, but every photo waits for your confirmation before it's attached to anything.</div>
+        <div class="import-picker-hint">Pick up to ${IMPORT_MAX_BATCH} photos from your camera roll at a time — we'll suggest the closest event for each one by date and location, but every photo waits for your confirmation before it's attached to anything. For a large batch, keep this tab open and active until it finishes uploading — switching away or locking the screen can interrupt it partway through.</div>
         <button type="button" class="import-pick-btn" onclick="document.getElementById('import-file-input').click()">Select Photos</button>
       </div>`;
   } else {
