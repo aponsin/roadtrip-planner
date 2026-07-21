@@ -3299,6 +3299,7 @@ async function commitPendingPhoto(entry, ev, tripId, list) {
   recordPhotoHash(tripId, entry.hash, finalUrl);
   const idx = list.findIndex(p => p.id === entry.id);
   if (idx !== -1) list.splice(idx, 1);
+  importFileByEntryId.delete(entry.id); // release the retained File — no retry needed once committed
   entry.status = 'committed';
   entry.committedEventId = ev.id;
 }
@@ -3378,12 +3379,30 @@ function discardAllPendingImports(tripId) {
 }
 
 // ── Import modal ──────────────────────────────────────────────────────────────
+// Browser-storage usage warning — the quota-exceeded failure class is fixed at the
+// source (previews are no longer persisted), but if storage ever creeps toward full
+// again (whatever the cause), surface it BEFORE it starts silently breaking saves.
+let importStorageWarning = null;
+async function checkStorageHeadroom() {
+  try {
+    if (!navigator.storage || !navigator.storage.estimate) return;
+    const { usage, quota } = await navigator.storage.estimate();
+    if (usage && quota && usage / quota > 0.85) {
+      const pct = Math.round((usage / quota) * 100);
+      importStorageWarning = `This browser's storage for the app is ${pct}% full. If it fills up completely, saving progress will start failing — clearing old pending imports (or other site data) is recommended before running big batches.`;
+    } else {
+      importStorageWarning = null;
+    }
+  } catch (_) { /* estimate() unsupported (e.g. older iOS) — nothing to do */ }
+}
+
 function openImportModal(tripId) {
   if (tripId == null) return;
   importActiveTripId = tripId;
   document.getElementById('import-overlay').classList.add('open');
   const list = getPendingList(tripId);
   renderImportModal();
+  checkStorageHeadroom().then(() => { if (importStorageWarning) renderImportModal(); });
   if (!list.length) {
     tryResumeFromRemoteManifest(tripId).then(found => { if (found) renderImportModal(); });
   }
@@ -3459,6 +3478,7 @@ async function handleImportFilesSelected(fileList) {
       status: 'processing', matches: [],
     };
     list.push(entry);
+    importFileByEntryId.set(entry.id, file); // enables same-session Retry on failure
     return { file, entry };
   });
   persistPendingImports(tripId);
@@ -3479,72 +3499,7 @@ async function handleImportFilesSelected(fileList) {
       continue;
     }
 
-    try {
-      // App-generated collages/panoramas can be enormous (huge-dimension composites,
-      // sometimes 50MB+ PNGs). Decoding one of those for resize can hang or outright
-      // memory-kill the tab on iPhone — which takes the whole rest of the batch down
-      // with it. Better to fail this one photo fast with a clear reason.
-      if (file.size > IMPORT_MAX_FILE_BYTES) {
-        throw new Error(`This file is ${Math.round(file.size / 1048576)}MB — too large to process in the browser (limit ${Math.round(IMPORT_MAX_FILE_BYTES / 1048576)}MB). Collage/panorama exports are the usual culprits; attach a smaller export of it manually via the event form if needed.`);
-      }
-      const hash = await withTimeout(sha256HexOfFile(file), IMPORT_FILE_TIMEOUT_MS, 'Reading photo');
-      entry.hash = hash;
-      // hash can legitimately be null (sha256HexOfFile gives up on files it can't read
-      // into memory — e.g. an enormous app-generated collage). Duplicate detection must
-      // be skipped entirely in that case: every not-yet-processed placeholder in this
-      // batch also has hash null, so a null-to-null comparison used to falsely flag such
-      // photos as "the exact same file was also selected earlier in this batch".
-      const committedDupUrl = hash ? findPhotoHashUrl(tripId, hash) : null;
-      const pendingDup = hash ? list.find(p => p !== entry && p.hash === hash) : null;
-      if (committedDupUrl || pendingDup) {
-        // Don't silently drop it — surface it as a suggested discard instead, with a
-        // local-only preview (no need to upload a photo we almost certainly don't want).
-        try { entry.previewDataUrl = await withTimeout(resizeImageFile(file), IMPORT_FILE_TIMEOUT_MS, 'Resizing photo'); } catch (_) {}
-        entry.duplicateNote = committedDupUrl
-          ? 'The exact same file is already attached to an event in this trip.'
-          : 'The exact same file was also selected earlier in this batch.';
-        entry.duplicateOfUrl = committedDupUrl || null;
-        entry.status = 'duplicate';
-        persistPendingImports(tripId);
-        renderImportModal();
-        continue;
-      }
-
-      const meta = await withTimeout(extractPhotoMeta(file), IMPORT_FILE_TIMEOUT_MS, 'Reading photo metadata');
-      Object.assign(entry, meta);
-      const dataUrl = await withTimeout(resizeImageFile(file), IMPORT_FILE_TIMEOUT_MS, 'Resizing photo');
-      entry.previewDataUrl = dataUrl;
-      renderImportModal();
-      const base64 = dataUrl.split(',')[1];
-      const filename = `import-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.jpg`;
-      entry.filename = filename;
-      // Not wrapped in the generic withTimeout/IMPORT_FILE_TIMEOUT_MS ceiling used for the
-      // other steps — ghUploadImage goes through ghApi(), which already retries transient
-      // failures internally over a longer budget (built for exactly the packet-loss case).
-      // Racing a shorter outer timeout against that would just abandon a retry that was
-      // about to succeed, and the abandoned upload can still land on GitHub moments later
-      // with no local record of it (cleanupStagingLeftovers() is the safety net for that).
-      entry.url = await ghUploadImage(base64, filename, `${IMPORT_STAGING_FOLDER}/${tripSlug}`);
-      entry.previewDataUrl = null;
-      // Persist the moment the staging URL is known, not just at the end of this loop
-      // iteration — otherwise a tab close/refresh between a successful upload and the
-      // next persist could leave a real file on GitHub with no local record of it at all
-      // (an unrecoverable orphan). cleanupStagingLeftovers() is the safety net for
-      // whatever slips through anyway (e.g. an upload that finishes just after we gave up
-      // waiting on it).
-      persistPendingImports(tripId);
-
-      // Every photo goes to manual review — nothing attaches to an event without
-      // the user explicitly confirming it (Section 23.3/23.5 of the spec).
-      const ranked = await scorePhotoAgainstEvents(entry, tripEvs);
-      const { status, matches } = classifyMatches(ranked);
-      entry.matches = matches;
-      entry.status = status; // 'confident' (pre-selected suggestion), 'ambiguous', or 'unmatched'
-    } catch (e) {
-      entry.status = 'error';
-      entry.errorMsg = e.message;
-      console.error('[photo import]', e);
-    }
+    await processImportFile(file, entry, tripId, tripEvs, tripSlug, list);
     persistPendingImports(tripId);
     renderImportModal();
   }
@@ -3553,6 +3508,110 @@ async function handleImportFilesSelected(fileList) {
   importBatchIndex = 0;
   importBatchTotal = 0;
   renderImportModal();
+}
+
+// The full per-photo pipeline (size guard → hash/dup-check → EXIF → resize → staging
+// upload → scoring), shared between the batch loop above and single-photo Retry.
+// Mutates `entry` in place and never throws — failures land as entry.status = 'error'.
+async function processImportFile(file, entry, tripId, tripEvs, tripSlug, list) {
+  try {
+    // App-generated collages/panoramas can be enormous (huge-dimension composites,
+    // sometimes 50MB+ PNGs). Decoding one of those for resize can hang or outright
+    // memory-kill the tab on iPhone — which takes the whole rest of the batch down
+    // with it. Better to fail this one photo fast with a clear reason.
+    if (file.size > IMPORT_MAX_FILE_BYTES) {
+      throw new Error(`This file is ${Math.round(file.size / 1048576)}MB — too large to process in the browser (limit ${Math.round(IMPORT_MAX_FILE_BYTES / 1048576)}MB). Collage/panorama exports are the usual culprits; attach a smaller export of it manually via the event form if needed.`);
+    }
+    const hash = await withTimeout(sha256HexOfFile(file), IMPORT_FILE_TIMEOUT_MS, 'Reading photo');
+    entry.hash = hash;
+    // hash can legitimately be null (sha256HexOfFile gives up on files it can't read
+    // into memory — e.g. an enormous app-generated collage). Duplicate detection must
+    // be skipped entirely in that case: every not-yet-processed placeholder in this
+    // batch also has hash null, so a null-to-null comparison used to falsely flag such
+    // photos as "the exact same file was also selected earlier in this batch".
+    const committedDupUrl = hash ? findPhotoHashUrl(tripId, hash) : null;
+    const pendingDup = hash ? list.find(p => p !== entry && p.hash === hash) : null;
+    if (committedDupUrl || pendingDup) {
+      // Don't silently drop it — surface it as a suggested discard instead, with a
+      // local-only preview (no need to upload a photo we almost certainly don't want).
+      try { entry.previewDataUrl = await withTimeout(resizeImageFile(file), IMPORT_FILE_TIMEOUT_MS, 'Resizing photo'); } catch (_) {}
+      entry.duplicateNote = committedDupUrl
+        ? 'The exact same file is already attached to an event in this trip.'
+        : 'The exact same file was also selected earlier in this batch.';
+      entry.duplicateOfUrl = committedDupUrl || null;
+      entry.status = 'duplicate';
+      return;
+    }
+
+    const meta = await withTimeout(extractPhotoMeta(file), IMPORT_FILE_TIMEOUT_MS, 'Reading photo metadata');
+    Object.assign(entry, meta);
+    const dataUrl = await withTimeout(resizeImageFile(file), IMPORT_FILE_TIMEOUT_MS, 'Resizing photo');
+    entry.previewDataUrl = dataUrl;
+    renderImportModal();
+    const base64 = dataUrl.split(',')[1];
+    const filename = `import-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.jpg`;
+    entry.filename = filename;
+    // Not wrapped in the generic withTimeout/IMPORT_FILE_TIMEOUT_MS ceiling used for the
+    // other steps — ghUploadImage goes through ghApi(), which already retries transient
+    // failures internally over a longer budget (built for exactly the packet-loss case).
+    // Racing a shorter outer timeout against that would just abandon a retry that was
+    // about to succeed, and the abandoned upload can still land on GitHub moments later
+    // with no local record of it (cleanupStagingLeftovers() is the safety net for that).
+    entry.url = await ghUploadImage(base64, filename, `${IMPORT_STAGING_FOLDER}/${tripSlug}`);
+    entry.previewDataUrl = null;
+    // Persist the moment the staging URL is known, not just at the end of the caller's
+    // loop iteration — otherwise a tab close/refresh between a successful upload and the
+    // next persist could leave a real file on GitHub with no local record of it at all
+    // (an unrecoverable orphan). cleanupStagingLeftovers() is the safety net for
+    // whatever slips through anyway (e.g. an upload that finishes just after we gave up
+    // waiting on it).
+    persistPendingImports(tripId);
+
+    // Every photo goes to manual review — nothing attaches to an event without
+    // the user explicitly confirming it (Section 23.3/23.5 of the spec).
+    const ranked = await scorePhotoAgainstEvents(entry, tripEvs);
+    const { status, matches } = classifyMatches(ranked);
+    entry.matches = matches;
+    entry.status = status; // 'confident' (pre-selected suggestion), 'ambiguous', or 'unmatched'
+  } catch (e) {
+    entry.status = 'error';
+    entry.errorMsg = e && e.message ? e.message : 'Unknown error';
+    console.error('[photo import]', e);
+  }
+}
+
+// Retry a failed photo without re-selecting it from the camera roll. Only possible in
+// the same session the photo was picked in: File handles can't survive a page reload,
+// so importFileByEntryId is deliberately a plain in-memory Map. After a reload the
+// Retry button simply isn't offered (canRetryImport returns false).
+const importFileByEntryId = new Map();
+function canRetryImport(entryId) { return importFileByEntryId.has(entryId); }
+async function retryImportPhoto(id) {
+  if (importBusy) return; // never run a retry pipeline concurrently with an active batch
+  const tripId = importActiveTripId;
+  const list = getPendingList(tripId);
+  const entry = list.find(p => p.id === id);
+  const file = importFileByEntryId.get(id);
+  if (!entry || !file || entry.status === 'processing' || entry.status === 'committing') return;
+  const trip = trips.find(t => t.id === tripId);
+  if (!trip) return;
+  entry.status = 'processing';
+  entry.errorMsg = null;
+  entry.matches = [];
+  renderImportModal();
+  await processImportFile(file, entry, tripId, events.filter(e => e.tripId === tripId), ghSanitize(trip.name), list);
+  persistPendingImports(tripId);
+  renderImportModal();
+}
+// Re-run every failed entry whose original file is still in memory, one at a time
+// (same sequential discipline as the batch loop — parallel decode/upload on a phone
+// is exactly how tabs get memory-killed).
+async function retryAllFailed() {
+  const tripId = importActiveTripId;
+  const ids = getPendingList(tripId)
+    .filter(p => p.status === 'error' && canRetryImport(p.id))
+    .map(p => p.id);
+  for (const id of ids) await retryImportPhoto(id);
 }
 
 function fmtImportDate(ts) {
@@ -3663,6 +3722,7 @@ function renderImportReviewItem(p, tripEvs) {
         ${canAssign ? `<select class="import-review-select" id="import-select-${p.id}">${options}</select>` : ''}
         <div class="import-review-actions">
           ${canAssign ? `<button type="button" class="${assignBtnClass}" onclick="confirmImportAssignment('${p.id}')">Assign</button>` : ''}
+          ${p.status === 'error' && canRetryImport(p.id) ? `<button type="button" class="import-btn-sm primary" onclick="retryImportPhoto('${p.id}')">Retry</button>` : ''}
           <button type="button" class="${discardBtnClass}" onclick="discardImportPhoto('${p.id}')">Discard</button>
         </div>
         ${(p.url || p.previewDataUrl)
@@ -3696,6 +3756,31 @@ function safeRenderReviewItem(p, tripEvs) {
 function renderImportModal() {
   const body = document.getElementById('import-body');
   if (!body || importActiveTripId == null) return;
+
+  // ── Pre-render snapshot ───────────────────────────────────────────────────
+  // This function rebuilds the whole panel via innerHTML and runs several times per
+  // photo during a batch — without these snapshots, reviewing while photos were still
+  // uploading was miserable: every progress tick reset the scroll position and wiped
+  // any dropdown choice the user was in the middle of making.
+  // (a) Scroll: remember which review card is at the top of the viewport and its exact
+  //     offset, then re-anchor to that same card after the rebuild — rows appearing or
+  //     disappearing above it no longer shift what the user is looking at.
+  // (b) Selects: remember every dropdown's current value and restore it afterward
+  //     (taking precedence over the default top-suggestion pre-select).
+  const prevSelects = {};
+  body.querySelectorAll('.import-review-select').forEach(sel => { if (sel.value) prevSelects[sel.id] = sel.value; });
+  let anchorId = null, anchorDelta = 0;
+  if (body.scrollTop > 0) {
+    for (const item of body.querySelectorAll('[data-import-id]')) {
+      if (item.offsetTop + item.offsetHeight > body.scrollTop) {
+        anchorId = item.dataset.importId;
+        anchorDelta = item.offsetTop - body.scrollTop;
+        break;
+      }
+    }
+  }
+  const prevScrollTop = body.scrollTop;
+
   const list = getPendingList(importActiveTripId);
   const tripEvs = events.filter(e => e.tripId === importActiveTripId).sort((a, b) => a.start - b.start);
   const processing = list.filter(p => p.status === 'processing');
@@ -3746,10 +3831,17 @@ function renderImportModal() {
         ? `<div class="import-cancel-row"><span class="import-review-meta">Wrapping up — the rest of this batch will be marked as interrupted…</span></div>`
         : `<div class="import-cancel-row"><button type="button" class="import-btn-sm danger" onclick="cancelImportBatch()">Cancel remaining photos</button></div>`;
     }
-    const failedCount = list.filter(p => p.status === 'error').length;
+    const failed = list.filter(p => p.status === 'error');
+    const failedCount = failed.length;
     if (failedCount >= 2) {
+      const retryableCount = failed.filter(p => canRetryImport(p.id)).length;
       html += `<div class="import-review-warning">⚠ ${failedCount} photos in this queue failed or were interrupted before finishing.</div>`;
+      html += `<div class="import-review-actions">`;
+      if (retryableCount && !importBusy) {
+        html += `<button type="button" class="import-btn-sm primary" onclick="retryAllFailed()">Retry ${retryableCount === failedCount ? 'all' : retryableCount} failed</button>`;
+      }
       html += `<button type="button" class="import-btn-sm danger" onclick="discardAllFailed()">Discard all ${failedCount} failed/interrupted</button>`;
+      html += `</div>`;
     }
 
     if (processing.length) {
@@ -3787,6 +3879,9 @@ function renderImportModal() {
     html += `<button type="button" class="import-add-more" onclick="document.getElementById('import-file-input').click()">+ Add more photos</button>`;
   }
   html += `<button type="button" class="import-cleanup-link" onclick="cleanupStagingLeftovers(${importActiveTripId})">🧹 Clean up leftover staged photos</button>`;
+  if (importStorageWarning) {
+    html = `<div class="import-review-warning">⚠ ${esc(importStorageWarning)}</div>` + html;
+  }
   body.innerHTML = html;
 
   // Pre-select the top suggested match for anything that already has one
@@ -3796,6 +3891,19 @@ function renderImportModal() {
       if (sel) sel.value = p.matches[0].eventId;
     }
   });
+
+  // ── Post-render restore (see snapshot at the top of this function) ─────────
+  // User-made dropdown choices win over the default pre-select above.
+  for (const id in prevSelects) {
+    const sel = document.getElementById(id);
+    if (sel) sel.value = prevSelects[id];
+  }
+  if (anchorId) {
+    const item = body.querySelector(`[data-import-id="${anchorId}"]`);
+    body.scrollTop = item ? Math.max(0, item.offsetTop - anchorDelta) : prevScrollTop;
+  } else if (prevScrollTop) {
+    body.scrollTop = prevScrollTop;
+  }
 }
 
 // Bulk-clear everything lacking real EXIF date info (file-date-only or no-date photos),
@@ -3916,6 +4024,7 @@ function discardImportPhoto(id) {
   const idx = list.findIndex(p => p.id === id);
   if (idx === -1) return;
   const [entry] = list.splice(idx, 1);
+  importFileByEntryId.delete(id); // release the retained File
   persistPendingImports(tripId);
   renderImportModal();
   if (entry.url) ghDiscardStagedPhoto(entry.url); // fire-and-forget
