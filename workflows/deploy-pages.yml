@@ -1,0 +1,57 @@
+# GitHub Pages deploy — runs ONLY when app or docs files change.
+#
+# Photo imports, CSV syncs, and pending-review manifests commit to media/, data/,
+# and shared/ — none of which affect the served site — so with this workflow as the
+# Pages source, those commits no longer trigger any deploy at all.
+#
+# Install (one time, in the GitHub web UI):
+#   1. In aponsin/roadtrip-planner: Add file → Create new file
+#      Name it exactly:  .github/workflows/deploy-pages.yml
+#      Paste this file's contents and commit to main.
+#   2. Settings → Pages → Build and deployment → Source: "GitHub Actions".
+#   3. Done. Verify: import a photo (no workflow run), then publish the app
+#      (one "Deploy site" run).
+ 
+name: Deploy site
+ 
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'docs/**'
+  workflow_dispatch:   # manual "Run workflow" button, just in case
+ 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+ 
+concurrency:
+  group: pages
+  cancel-in-progress: true
+ 
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+ 
+      # Package only what the site actually serves — keeps the deploy artifact tiny
+      # even once media/ holds hundreds of photos (those are served via
+      # raw.githubusercontent.com, not Pages).
+      - name: Stage site files
+        run: |
+          mkdir -p _site
+          cp index.html _site/
+          [ -d docs ] && cp -r docs _site/docs || true
+ 
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '_site'
+      - uses: actions/deploy-pages@v4
+        id: deployment
