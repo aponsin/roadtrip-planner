@@ -5343,29 +5343,36 @@ function renderCal() {
 }
 
 // ── FORM ───────────────────────────────────────────────────────────────────────
-function timelineDblClick(e, weekIdx) {
-  if (e.target.closest('.ev-bar')) return;
-  const day = dayUnderMouse(e);
-  if (!day) return;
-
-  // Find the latest event end on this day (any event overlapping it)
-  const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate());
-  const dayEnd   = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+// Pure logic for "where should a new event start when the user clicks here?" —
+// kept DOM-free so the pre-publish test suite can pin its behavior down.
+//
+// Rule: the new event starts right after the latest-ending event that had ALREADY
+// STARTED at the clicked moment (and touches the clicked day). Events later that day
+// are ignored — the old version took the max end of EVERYTHING overlapping the day,
+// so a day with an overnight stay (9pm → 5-7am next morning) suggested "tomorrow at
+// 5am" even when you clicked at 2pm. Clicking INSIDE a running event still lands
+// right after it ends (that's the natural "next free slot"). Empty day → 9am.
+function defaultStartForTimelineClick(clickTime, allEvents) {
+  const dayStart = new Date(clickTime.getFullYear(), clickTime.getMonth(), clickTime.getDate());
+  const dayEnd   = new Date(clickTime.getFullYear(), clickTime.getMonth(), clickTime.getDate() + 1);
   let latestEnd  = null;
-  for (const ev of events) {
-    if (ev.start < dayEnd && ev.end > dayStart) {
+  for (const ev of allEvents) {
+    if (ev.start <= clickTime && ev.start < dayEnd && ev.end > dayStart) {
       if (!latestEnd || ev.end.getTime() > latestEnd.getTime()) latestEnd = ev.end;
     }
   }
+  if (latestEnd) return snap15(latestEnd);
+  const d = new Date(dayStart);
+  d.setHours(9, 0, 0, 0);
+  return d;
+}
 
-  // Use snapped end of latest event, or 9am if no events on this day
-  let defaultStart;
-  if (latestEnd) {
-    defaultStart = snap15(latestEnd);
-  } else {
-    defaultStart = new Date(day);
-    defaultStart.setHours(9, 0, 0, 0);
-  }
+function timelineDblClick(e, weekIdx) {
+  if (e.target.closest('.ev-bar')) return;
+  const clickTime = dateTimeUnderMouse(e);
+  if (!clickTime) return;
+
+  const defaultStart = defaultStartForTimelineClick(clickTime, events);
 
   // Pre-select the trip whose band was double-clicked
   const band = e.target.closest('.trip-band');
@@ -6345,6 +6352,14 @@ function dragUp(e) {
 }
 
 function dayUnderMouse(e) {
+  const t = dateTimeUnderMouse(e);
+  return t ? new Date(t.getFullYear(), t.getMonth(), t.getDate()) : null;
+}
+
+// Like dayUnderMouse, but keeps the horizontal position WITHIN the day column as a
+// time of day — needed so a new event's suggested start can respect where in the day
+// the user actually clicked, not just which day.
+function dateTimeUnderMouse(e) {
   const VD = getViewDays();
   const VM = getViewMs();
   const rows = document.querySelectorAll('.week-row');
@@ -6354,8 +6369,10 @@ function dayUnderMouse(e) {
     const tl = rows[w].querySelector('.timeline');
     const tr = tl.getBoundingClientRect();
     const pct = Math.max(0, Math.min(0.9999, (e.clientX - tr.left) / tr.width));
-    const dayIdx = Math.floor(pct * VD);
-    return addDays(new Date(viewStart.getTime() + w * VM), dayIdx);
+    const dayFrac = pct * VD;
+    const dayIdx = Math.floor(dayFrac);
+    const day = addDays(new Date(viewStart.getTime() + w * VM), dayIdx);
+    return new Date(day.getTime() + (dayFrac - dayIdx) * 86400000);
   }
   return null;
 }
