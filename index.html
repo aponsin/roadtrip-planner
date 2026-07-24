@@ -103,6 +103,17 @@ body {
   transition: background .15s; flex-shrink: 0;
 }
 .btn-gh-sync:hover { background: rgba(255,255,255,.2); }
+.btn-debug-toggle {
+  background: none; border: none; cursor: pointer; font-size: 13px;
+  opacity: .18; padding: 4px 6px; margin-left: 2px; transition: opacity .15s;
+}
+.btn-debug-toggle:hover { opacity: .55; }
+.btn-debug-toggle.on { opacity: 1; filter: drop-shadow(0 0 3px #fbbf24); }
+.form-debug {
+  background: #fefce8; border: 1px solid #fde047; border-radius: 8px;
+  padding: 8px 10px; margin-bottom: 10px; font-size: 11px; line-height: 1.6;
+  color: #713f12; white-space: pre-wrap; font-family: ui-monospace, monospace;
+}
 #gh-modal {
   display: none; position: fixed; inset: 0; z-index: 9000;
   background: rgba(15,23,42,.55); backdrop-filter: blur(3px);
@@ -651,6 +662,25 @@ body {
 }
 .tviz-map-btn:hover { background: #dbeafe; }
 .tviz-body { overflow-y: auto; padding: 8px 24px 24px; flex: 1; }
+.tviz-search-row {
+  display: flex; gap: 8px; align-items: center; padding: 10px 24px 0;
+}
+.tviz-search {
+  flex: 1; min-width: 0; padding: 8px 12px; border: 1.5px solid #e2e8f0;
+  border-radius: 8px; font-size: 13px; color: #0f172a; background: #f8fafc;
+  outline: none; -webkit-appearance: none;
+}
+.tviz-search:focus { border-color: #3b82f6; background: #fff; }
+.tviz-photo-filter {
+  flex-shrink: 0; padding: 8px 12px; border: 1.5px solid #e2e8f0; border-radius: 8px;
+  background: #fff; cursor: pointer; font-size: 12px; font-weight: 600; color: #475569;
+  white-space: nowrap;
+}
+.tviz-photo-filter:hover { border-color: #93c5fd; }
+.tviz-photo-filter.with    { background: #dbeafe; border-color: #3b82f6; color: #1e40af; }
+.tviz-photo-filter.without { background: #fef3c7; border-color: #d97706; color: #92400e; }
+.tviz-search-count { font-size: 11px; color: #64748b; padding: 4px 24px 0; min-height: 0; }
+.tviz-search-count:empty { display: none; }
 .tviz-day {
   margin-top: 22px;
 }
@@ -852,6 +882,7 @@ body {
   }
   .tviz-ev { break-inside: avoid; page-break-inside: avoid; }
   .tviz-close, .tviz-print-btn { display: none !important; }
+  .tviz-search-row, .tviz-search-count { display: none !important; }
   .tviz-map-btn { margin: 12px 0 0 !important; }
   a { color: #0f172a !important; }
 }
@@ -1258,6 +1289,7 @@ body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
     <span class="sync-label">Sync</span>
   </button>
   <button class="btn-new-event" onclick="openForm()">＋ New Event</button>
+  <button class="btn-debug-toggle" id="btn-debug-toggle" onclick="toggleDebugMode()" title="Debug mode — explains New Event defaults">🐞</button>
 </header>
 
 <!-- GitHub Sync Modal -->
@@ -1350,6 +1382,7 @@ body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
       <div class="form-head" id="form-head">New Event</div>
       <button class="form-nav-btn" id="form-nav-next" onclick="formNavStep(1)"  title="Next event">›</button>
     </div>
+    <div id="form-debug" class="form-debug" style="display:none"></div>
     <div class="form-row">
       <div class="ff wide">
         <label>Title</label>
@@ -1550,6 +1583,12 @@ body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
       <button class="tviz-close" onclick="closeTripViz()">✕</button>
     </div>
     <div class="tviz-stats" id="tviz-stats"></div>
+    <div class="tviz-search-row">
+      <input type="search" id="tviz-search" class="tviz-search" placeholder="🔍 Search events — title, notes, address, category, date…"
+             autocomplete="off" oninput="tvizApplySearch()" onkeydown="tvizSearchKeydown(event)">
+      <button type="button" class="tviz-photo-filter" id="tviz-photo-filter" onclick="tvizCyclePhotoFilter()" title="Filter by photos">📷 All</button>
+    </div>
+    <div class="tviz-search-count" id="tviz-search-count"></div>
     <div class="tviz-body" id="tviz-body"></div>
   </div>
 </div>
@@ -1915,6 +1954,7 @@ function init() {
   document.addEventListener('wheel', hideBarHover, { passive: true });
   window.addEventListener('resize', () => { renderCalHeader(); renderCal(); });
   initGhSlider();
+  document.getElementById('btn-debug-toggle')?.classList.toggle('on', debugMode);
 }
 
 // ── PERSISTENCE ────────────────────────────────────────────────────────────────
@@ -2314,7 +2354,7 @@ function openTripViz(tripId) {
       .filter(({ ev, isStart }) => ev.category === 'driving' && ev.distanceM && isStart)
       .reduce((s, { ev }) => s + ev.distanceM, 0);
 
-    bodyHtml += `<div class="tviz-day">
+    bodyHtml += `<div class="tviz-day" data-daytext="${esc(fmtDate(dayDate).toLowerCase())}">
       <div class="tviz-day-header">
         <div class="tviz-day-num" style="background:${trip.color}">${dayNum}</div>
         <div class="tviz-day-label">${fmtDate(dayDate)}</div>
@@ -2416,7 +2456,15 @@ function openTripViz(tripId) {
           `</div>`;
       }
 
-      bodyHtml += `<div class="tviz-ev" style="${cardStyle}">
+      // Everything the search box can match on for this event: title, notes, every
+      // address field, and the category (both its label and raw key).
+      const searchText = [
+        ev.title, ev.description, ev.departure, ev.arrival,
+        ev.sleepingAddress, ev.diningAddress, ev.sightseeingAddress,
+        cat.label, ev.category,
+      ].filter(Boolean).join(' ').toLowerCase();
+
+      bodyHtml += `<div class="tviz-ev" style="${cardStyle}" data-evid="${ev.id}" data-photos="${ev.photos && ev.photos.length ? 1 : 0}" data-search="${esc(searchText)}">
         <div class="tviz-ev-icon">${isStart ? cat.emoji : '↕'}</div>
         <div class="tviz-ev-body">
           <div class="tviz-ev-title">${esc(ev.title)}</div>
@@ -2432,12 +2480,86 @@ function openTripViz(tripId) {
   document.getElementById('tviz-color-bar').style.background = trip.color;
   document.getElementById('tviz-title').textContent = trip.name;
   document.getElementById('tviz-body').innerHTML = bodyHtml;
+  tvizResetFilters(); // filters left over from the last visit must not hide anything now
   const overlay = document.getElementById('trip-viz-overlay');
   overlay.dataset.tripId = tripId;
   overlay.classList.add('open');
   document.getElementById('tviz-body').scrollTop = 0;
   // Init leg maps after modal is visible (Leaflet needs container dimensions)
   setTimeout(initAllLegMaps, 80);
+}
+
+// ── Trip Summary search ─────────────────────────────────────────────────────
+// Live text filter over the day-by-day itinerary. Each event card carries a
+// data-search attribute (title + notes + all address fields + category), and each
+// day section a data-daytext (its full heading, e.g. "monday, july 6, 2026") — so
+// queries like "denali", "campground", "driving", or "july 6" all work. Matching
+// a day's heading shows that whole day. Multi-day events match consistently on
+// every day they span (each of their cards carries the same search text).
+// Photo filter cycles: all → with (only events that have photos) → without → all.
+// Combines with the text search (AND), since "which dinners still need photos?" is
+// exactly a combined query.
+let tvizPhotoFilter = 'all';
+function tvizCyclePhotoFilter() {
+  tvizPhotoFilter = tvizPhotoFilter === 'all' ? 'with' : tvizPhotoFilter === 'with' ? 'without' : 'all';
+  const btn = document.getElementById('tviz-photo-filter');
+  btn.classList.toggle('with', tvizPhotoFilter === 'with');
+  btn.classList.toggle('without', tvizPhotoFilter === 'without');
+  btn.textContent = tvizPhotoFilter === 'with' ? '📷 With photos'
+                  : tvizPhotoFilter === 'without' ? '📷 Without photos'
+                  : '📷 All';
+  tvizApplySearch();
+}
+
+function tvizApplySearch() {
+  const input = document.getElementById('tviz-search');
+  const countEl = document.getElementById('tviz-search-count');
+  const body = document.getElementById('tviz-body');
+  if (!input || !body) return;
+  const q = input.value.trim().toLowerCase();
+  const pf = tvizPhotoFilter;
+  const filtering = !!q || pf !== 'all';
+
+  const matchedEvIds = new Set();
+  for (const day of body.querySelectorAll('.tviz-day')) {
+    const dayMatch = !q || (day.dataset.daytext || '').includes(q);
+    let visibleCards = 0;
+    for (const card of day.querySelectorAll('.tviz-ev')) {
+      const textMatch = dayMatch || (card.dataset.search || '').includes(q);
+      const photoMatch = pf === 'all' || (pf === 'with') === (card.dataset.photos === '1');
+      const match = textMatch && photoMatch;
+      card.style.display = match ? '' : 'none';
+      if (match) { visibleCards++; if (filtering) matchedEvIds.add(card.dataset.evid); }
+    }
+    day.style.display = visibleCards ? '' : 'none';
+  }
+  // The full-route maps button only makes sense for the unfiltered view
+  const mapBtn = body.querySelector('.tviz-map-btn');
+  if (mapBtn) mapBtn.style.display = filtering ? 'none' : '';
+
+  const filterNote = pf === 'with' ? ' · only events with photos' : pf === 'without' ? ' · only events without photos' : '';
+  countEl.textContent = !filtering ? ''
+    : matchedEvIds.size
+      ? `${matchedEvIds.size} matching event${matchedEvIds.size === 1 ? '' : 's'}${filterNote}`
+      : `No events match${filterNote} — adjust the search or filter.`;
+}
+// Full reset (used when the modal opens) — text AND photo filter back to defaults.
+function tvizResetFilters() {
+  const input = document.getElementById('tviz-search');
+  if (input) input.value = '';
+  if (tvizPhotoFilter !== 'all') { tvizPhotoFilter = 'without'; tvizCyclePhotoFilter(); } // cycle lands on 'all' + fixes button style
+  else tvizApplySearch();
+}
+function tvizSearchKeydown(e) {
+  // Escape clears the search text first (and keeps the modal open); a second Escape —
+  // with the box already empty — falls through to the global close handler. The photo
+  // filter is a deliberate toggle, so Escape leaves it alone.
+  if (e.key === 'Escape' && e.target.value) {
+    e.stopPropagation();
+    e.target.value = '';
+    tvizApplySearch();
+    e.target.focus();
+  }
 }
 
 async function refreshLegMap(evId) {
@@ -5346,25 +5468,56 @@ function renderCal() {
 // Pure logic for "where should a new event start when the user clicks here?" —
 // kept DOM-free so the pre-publish test suite can pin its behavior down.
 //
-// Rule: the new event starts right after the latest-ending event that had ALREADY
-// STARTED at the clicked moment (and touches the clicked day). Events later that day
-// are ignored — the old version took the max end of EVERYTHING overlapping the day,
-// so a day with an overnight stay (9pm → 5-7am next morning) suggested "tomorrow at
-// 5am" even when you clicked at 2pm. Clicking INSIDE a running event still lands
-// right after it ends (that's the natural "next free slot"). Empty day → 9am.
-function defaultStartForTimelineClick(clickTime, allEvents) {
+// Rule: the new event starts right after the latest-ending event — WITHIN THE TARGET
+// TRIP ONLY — that had already started at the clicked moment (and touches the clicked
+// day). Scoping to one trip matters: two trips running around the same dates used to
+// bleed into each other's suggestions. tripId is the bucket to consider (null = the
+// "Unassigned" bucket). Events later that day are ignored — a day with an overnight
+// stay (9pm → 5-7am next morning) used to suggest "tomorrow at 5am" even for an
+// afternoon click. Clicking INSIDE a running event lands right after it ends. Empty
+// day → 9am. Returns { start, debug } so debug mode can explain the decision.
+function defaultStartForTimelineClick(clickTime, allEvents, tripId) {
   const dayStart = new Date(clickTime.getFullYear(), clickTime.getMonth(), clickTime.getDate());
   const dayEnd   = new Date(clickTime.getFullYear(), clickTime.getMonth(), clickTime.getDate() + 1);
-  let latestEnd  = null;
-  for (const ev of allEvents) {
-    if (ev.start <= clickTime && ev.start < dayEnd && ev.end > dayStart) {
-      if (!latestEnd || ev.end.getTime() > latestEnd.getTime()) latestEnd = ev.end;
-    }
+  const scoped = allEvents.filter(ev => (tripId == null ? ev.tripId == null : ev.tripId === tripId));
+  let anchor = null;      // the event whose end becomes the suggested start
+  let ignoredLater = 0;   // events on this day that hadn't started yet at click time
+  for (const ev of scoped) {
+    const touchesDay = ev.start < dayEnd && ev.end > dayStart;
+    if (!touchesDay) continue;
+    if (ev.start > clickTime) { ignoredLater++; continue; }
+    if (!anchor || ev.end.getTime() > anchor.end.getTime()) anchor = ev;
   }
-  if (latestEnd) return snap15(latestEnd);
-  const d = new Date(dayStart);
-  d.setHours(9, 0, 0, 0);
-  return d;
+  const start = anchor
+    ? snap15(anchor.end)
+    : (() => { const d = new Date(dayStart); d.setHours(9, 0, 0, 0); return d; })();
+  return { start, debug: { clickTime, tripId, scopedCount: scoped.length, anchor, ignoredLater } };
+}
+
+// Pure: which trip band should a click count as? A direct hit wins (distance 0);
+// otherwise the vertically NEAREST band whose horizontal span covers the click —
+// double-clicking just above or below a trip's band clearly "means" that trip, and
+// requiring pixel-perfect hits made the form fall back to the last-used trip instead.
+function nearestTripBandAt(bandBoxes, x, y) {
+  let best = null, bestDist = Infinity;
+  for (const b of bandBoxes) {
+    if (x < b.left || x > b.right) continue;
+    const dist = y < b.top ? b.top - y : y > b.bottom ? y - b.bottom : 0;
+    if (dist < bestDist) { bestDist = dist; best = b; }
+  }
+  return best;
+}
+
+// When exactly one trip is toggled visible on the calendar, everything the user does
+// is about that trip — it outranks "last used" (which may even point at a hidden trip).
+function onlyVisibleTripId() {
+  const vis = trips.filter(t => t.visible);
+  return vis.length === 1 ? vis[0].id : null;
+}
+// Single resolution chain for which trip a new event defaults to:
+// explicit (band under/near the click) → the only visible trip → last used → none.
+function resolveDefaultTripId(explicit) {
+  return explicit ?? onlyVisibleTripId() ?? lastTripId ?? null;
 }
 
 function timelineDblClick(e, weekIdx) {
@@ -5372,12 +5525,27 @@ function timelineDblClick(e, weekIdx) {
   const clickTime = dateTimeUnderMouse(e);
   if (!clickTime) return;
 
-  const defaultStart = defaultStartForTimelineClick(clickTime, events);
-
-  // Pre-select the trip whose band was double-clicked
+  // Pre-select the trip whose band was double-clicked; the SAME trip scopes the
+  // default-start calculation so a second trip around the same dates can't skew it.
   const band = e.target.closest('.trip-band');
-  const bandTripId = band && band.dataset.tripId !== '' ? parseInt(band.dataset.tripId) : null;
-  openForm(null, defaultStart, bandTripId);
+  let bandTripId = band && band.dataset.tripId !== '' ? parseInt(band.dataset.tripId) : null;
+  let tripSource = bandTripId != null ? 'band' : null;
+  if (bandTripId == null) {
+    // No direct hit — snap to the nearest band in this week row at the clicked day
+    const row = e.target.closest('.timeline');
+    if (row) {
+      const boxes = [...row.querySelectorAll('.trip-band')]
+        .filter(el => el.dataset.tripId !== '')
+        .map(el => { const r = el.getBoundingClientRect(); return { tripId: parseInt(el.dataset.tripId), left: r.left, right: r.right, top: r.top, bottom: r.bottom }; });
+      const hit = nearestTripBandAt(boxes, e.clientX, e.clientY);
+      if (hit) { bandTripId = hit.tripId; tripSource = 'nearBand'; }
+    }
+  }
+  const targetTripId = resolveDefaultTripId(bandTripId);
+  const { start, debug } = defaultStartForTimelineClick(clickTime, events, targetTripId);
+  debug.tripSource = tripSource
+    ?? (onlyVisibleTripId() != null ? 'onlyVisible' : lastTripId != null ? 'lastUsed' : 'none');
+  openForm(null, start, bandTripId, debug);
 }
 
 function positionOverlay() {
@@ -5400,7 +5568,47 @@ function positionOverlay() {
   overlay.style.height = (bottom - top) + 'px';
 }
 
-function openForm(evObj, defaultDate, defaultTripId) {
+// ── Debug mode ────────────────────────────────────────────────────────────────
+// Discreet 🐞 toggle in the header (persisted). When on, the New Event form shows a
+// plain-language box explaining exactly how the suggested trip and start time were
+// chosen — for diagnosing "why did it default to THAT?" without dev tools.
+let debugMode = localStorage.getItem('rtp4_debug') === '1';
+function toggleDebugMode() {
+  debugMode = !debugMode;
+  localStorage.setItem('rtp4_debug', debugMode ? '1' : '0');
+  document.getElementById('btn-debug-toggle').classList.toggle('on', debugMode);
+}
+
+function describeNewEventDefaults(debug, resolvedTripId) {
+  const fmtDT = d => d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const trip = trips.find(t => t.id === resolvedTripId);
+  const bucketName = trip ? `“${trip.name}”` : 'Unassigned';
+  const lines = ['🐞 Why these defaults?'];
+  if (!debug) {
+    lines.push('Opened from the header button (no calendar click) → today 9:00 AM.');
+    lines.push(`Trip: ${bucketName} (${onlyVisibleTripId() === resolvedTripId && resolvedTripId != null ? 'the only trip currently displayed' : 'last used'}).`);
+    return lines.join('\n');
+  }
+  lines.push(`You clicked: ${fmtDT(debug.clickTime)} (click position → time of day).`);
+  const src = debug.tripSource === 'band' ? 'the trip band under your click'
+            : debug.tripSource === 'nearBand' ? 'the nearest trip band above/below your click (same day column)'
+            : debug.tripSource === 'onlyVisible' ? 'the only trip currently displayed (no band near the click)'
+            : debug.tripSource === 'lastUsed' ? 'your last-used trip (no band near the click)'
+            : 'nothing — no band clicked, no last-used trip';
+  lines.push(`Trip: ${bucketName}, from ${src}.`);
+  lines.push(`Considered ONLY this trip's ${debug.scopedCount} event(s) — other trips are ignored.`);
+  if (debug.anchor) {
+    lines.push(`Anchor: “${debug.anchor.title}” had already started at your click time and ends ${fmtDT(debug.anchor.end)} → suggested start right after it (snapped to 15 min).`);
+  } else {
+    lines.push('No event of this trip on that day had started by your click time → default 9:00 AM.');
+  }
+  if (debug.ignoredLater) {
+    lines.push(`Ignored ${debug.ignoredLater} event(s) later that day that hadn't started yet at your click time (e.g. tonight's hotel).`);
+  }
+  return lines.join('\n');
+}
+
+function openForm(evObj, defaultDate, defaultTripId, newEventDebug) {
   if (readOnlyMode) return;
   const overlay = document.getElementById('form-overlay');
   positionOverlay();
@@ -5410,6 +5618,8 @@ function openForm(evObj, defaultDate, defaultTripId) {
   refreshTripSelect();
 
   routeData = null;
+
+  document.getElementById('form-debug').style.display = 'none'; // only New Event + debug mode shows it
 
   if (evObj) {
     editingId = evObj.id;
@@ -5469,9 +5679,14 @@ function openForm(evObj, defaultDate, defaultTripId) {
     document.getElementById('btn-del').style.display = 'none';
     document.getElementById('f-title').value = '';
     document.getElementById('f-cat').value   = 'driving';
-    document.getElementById('f-trip').value  = defaultTripId ?? lastTripId ?? '';
+    document.getElementById('f-trip').value  = resolveDefaultTripId(defaultTripId) ?? '';
     const now = defaultDate ? snap15(defaultDate) : (() => { const d = new Date(); d.setHours(9, 0, 0, 0); return d; })();
     setStartFields(now);
+    if (debugMode) {
+      const dbgEl = document.getElementById('form-debug');
+      dbgEl.textContent = describeNewEventDefaults(newEventDebug, resolveDefaultTripId(defaultTripId));
+      dbgEl.style.display = '';
+    }
     document.getElementById('f-dur-h').value = 1;
     document.getElementById('f-dur-m').value = 0;
     document.getElementById('f-desc').value  = '';
