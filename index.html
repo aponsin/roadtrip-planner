@@ -182,8 +182,40 @@ body {
   margin-left: auto; font-size: 10px; font-weight: 700;
   padding: 2px 8px; border-radius: 10px; flex-shrink: 0;
 }
-.gh-picker-badge.new     { background: #d1fae5; color: #065f46; }
-.gh-picker-badge.replace { background: #fef3c7; color: #92400e; }
+.gh-picker-badge.new      { background: #d1fae5; color: #065f46; }
+.gh-picker-badge.replace  { background: #fef3c7; color: #92400e; }
+.gh-picker-badge.insync   { background: #d1fae5; color: #065f46; }
+.gh-picker-badge.newtrip  { background: #d1fae5; color: #065f46; }
+.gh-picker-badge.local    { background: #fef3c7; color: #92400e; }
+.gh-picker-badge.remote   { background: #dbeafe; color: #1e40af; }
+.gh-picker-badge.diverged { background: #fee2e2; color: #b91c1c; }
+.gh-picker-badge.unknown  { background: #f1f5f9; color: #64748b; }
+#sync-banner {
+  position: fixed; top: calc(var(--hdr) + 8px); left: 50%; transform: translateX(-50%);
+  z-index: 260; max-width: min(720px, calc(100vw - 24px));
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+  background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, .18);
+  font-size: 12px; color: #1e40af; line-height: 1.4;
+}
+#sync-banner-text { flex: 1; min-width: 0; }
+.sync-banner-btn {
+  flex-shrink: 0; padding: 4px 12px; border: 1px solid #3b82f6; border-radius: 6px;
+  background: #3b82f6; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.sync-banner-btn:hover { background: #2563eb; }
+.sync-banner-dismiss {
+  flex-shrink: 0; background: none; border: none; cursor: pointer;
+  color: #60a5fa; font-size: 13px; padding: 2px 4px;
+}
+.sync-banner-dismiss:hover { color: #1e40af; }
+.btn-gh-sync { position: relative; }
+.sync-attn-dot {
+  position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px;
+  border-radius: 8px; background: #f59e0b; color: #fff; font-size: 9px;
+  font-weight: 800; display: flex; align-items: center; justify-content: center;
+  padding: 0 3px; border: 1.5px solid #0f172a;
+}
 .gh-picker-toggle {
   background: none; border: none; cursor: pointer; font-size: 11px;
   color: #2563eb; padding: 0; margin: 0 0 6px; font-weight: 600;
@@ -1291,6 +1323,13 @@ body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
   <button class="btn-new-event" onclick="openForm()">＋ New Event</button>
 </header>
 
+<!-- Sync drift banner (shown by checkSyncStatus when devices are out of sync) -->
+<div id="sync-banner" style="display:none">
+  <span id="sync-banner-text"></span>
+  <button type="button" class="sync-banner-btn" onclick="openGHModal()">Open Sync</button>
+  <button type="button" class="sync-banner-dismiss" onclick="dismissSyncBanner()" title="Dismiss until something changes">✕</button>
+</div>
+
 <!-- GitHub Sync Modal -->
 <div id="gh-modal" onclick="if(event.target===this)closeGHModal()">
   <div id="gh-modal-box">
@@ -1954,6 +1993,12 @@ function init() {
   document.addEventListener('wheel', hideBarHover, { passive: true });
   window.addEventListener('resize', () => { renderCalHeader(); renderCal(); });
   initGhSlider();
+
+  // Multi-device drift detection: check at open, when the tab regains focus (the
+  // moment you switch from the other device), and every 5 minutes while open.
+  setTimeout(() => checkSyncStatus(), 2500); // let initial render settle first
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkSyncStatus(); });
+  setInterval(() => { if (!document.hidden) checkSyncStatus(); }, SYNC_CHECK_INTERVAL_MS);
 }
 
 // ── PERSISTENCE ────────────────────────────────────────────────────────────────
@@ -2217,6 +2262,8 @@ function deleteTrip(id) {
   if (!confirm(msg)) return;
   events.filter(e => e.tripId === id).forEach(purgeEventPhotos);
   discardAllPendingImports(id);
+  const doomed = trips.find(t => t.id === id);
+  if (doomed) { delete syncState[ghTripFilename(doomed)]; saveSyncState(); }
   trips  = trips.filter(t => t.id !== id);
   events = events.filter(e => e.tripId !== id);
   save(); renderSidebar(); refreshTripSelect(); render();
@@ -2227,7 +2274,22 @@ function rnKey(e, id)     { if (e.key==='Enter'||e.key==='Escape') finishRename(
 function finishRename(id) {
   const inp = document.getElementById(`rn-${id}`);
   const name = (inp?.value || '').trim();
-  if (name) { const t = trips.find(t=>t.id===id); if (t) t.name = name; }
+  if (name) {
+    const t = trips.find(t=>t.id===id);
+    if (t && t.name !== name) {
+      // Renaming changes the CSV filename — carry the sync fingerprint over so the
+      // trip doesn't suddenly look "never synced" (note: the file on GitHub keeps
+      // the OLD name until the next save creates the new one).
+      const oldKey = ghTripFilename(t);
+      t.name = name;
+      const newKey = ghTripFilename(t);
+      if (oldKey !== newKey && syncState[oldKey]) {
+        syncState[newKey] = syncState[oldKey];
+        delete syncState[oldKey];
+        saveSyncState();
+      }
+    }
+  }
   renamingId = null;
   save(); renderSidebar(); refreshTripSelect();
 }
@@ -4593,6 +4655,86 @@ const SYNC_VERDICT_META = {
   'remote-missing': { label: 'missing on GitHub',                cls: 'unknown' },
 };
 
+// ── Background sync checker ───────────────────────────────────────────────────
+// Runs at app open, when the tab regains focus (the moment you switch devices),
+// and every 5 minutes. One GET of the /data listing classifies every trip; results
+// drive a dismissible banner ("newer on GitHub — load it?") and a badge on the
+// cloud button ("you have unsaved changes"). Dismissing the banner remembers the
+// exact situation it described — it only reappears when something new happens.
+const SYNC_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const SYNC_CHECK_MIN_GAP_MS  = 45 * 1000; // focus + timer bursts shouldn't stack requests
+let _lastSyncCheckAt = 0;
+let _syncBannerDismissedSig = null;
+let _lastSyncVerdicts = new Map();
+
+async function checkSyncStatus(force = false) {
+  if (readOnlyMode) return;
+  const cfg = ghConfig();
+  if (!cfg.token || !cfg.repo || !cfg.repo.includes('/')) return; // sync not configured
+  const now = Date.now();
+  if (!force && now - _lastSyncCheckAt < SYNC_CHECK_MIN_GAP_MS) return;
+  _lastSyncCheckAt = now;
+  const [owner, repo] = cfg.repo.split('/');
+  let listing;
+  try {
+    listing = await ghApi('GET', 'data', null, cfg.token, owner, repo);
+  } catch (_) { return; } // offline — try again next cycle
+  if (!Array.isArray(listing)) return;
+  _lastSyncVerdicts = classifyTripsAgainstListing(listing);
+  renderSyncStatusUI();
+}
+
+function _syncAttentionSummary() {
+  const byVerdict = v => [..._lastSyncVerdicts.entries()].filter(([, vv]) => vv === v)
+    .map(([id]) => trips.find(t => t.id === id)?.name).filter(Boolean);
+  const remoteAhead = byVerdict('remote-ahead');
+  const diverged    = byVerdict('diverged');
+  const localAhead  = byVerdict('local-ahead');
+  const bits = [];
+  if (remoteAhead.length) bits.push(`☁ ${remoteAhead.map(n => `“${n}”`).join(', ')} ${remoteAhead.length === 1 ? 'has' : 'have'} newer data on GitHub`);
+  if (diverged.length)    bits.push(`⚠ ${diverged.map(n => `“${n}”`).join(', ')} changed on BOTH devices`);
+  if (localAhead.length)  bits.push(`✏ ${localAhead.map(n => `“${n}”`).join(', ')} ${localAhead.length === 1 ? 'has' : 'have'} unsaved local changes`);
+  return { remoteAhead, diverged, localAhead, bits, sig: bits.join('|') };
+}
+
+function renderSyncStatusUI() {
+  const { remoteAhead, diverged, localAhead, bits, sig } = _syncAttentionSummary();
+
+  // Cloud-button badge: anything needing attention
+  const attention = remoteAhead.length + diverged.length + localAhead.length;
+  const syncBtn = document.querySelector('.btn-gh-sync');
+  if (syncBtn) {
+    let dot = syncBtn.querySelector('.sync-attn-dot');
+    if (attention && !dot) {
+      dot = document.createElement('span');
+      dot.className = 'sync-attn-dot';
+      syncBtn.appendChild(dot);
+    }
+    if (dot) {
+      dot.style.display = attention ? '' : 'none';
+      if (attention) dot.textContent = attention;
+      syncBtn.title = attention
+        ? `Sync needs attention: ${[remoteAhead.length && `${remoteAhead.length} newer on GitHub`, localAhead.length && `${localAhead.length} with unsaved changes`, diverged.length && `${diverged.length} diverged`].filter(Boolean).join(', ')}`
+        : 'Sync trips with GitHub';
+    }
+  }
+
+  // Banner: only for states worth interrupting for; stays dismissed until the
+  // situation actually changes (new trip drifting, direction change, etc.)
+  const banner = document.getElementById('sync-banner');
+  if (!banner) return;
+  if (!bits.length || _syncBannerDismissedSig === sig) {
+    banner.style.display = 'none';
+    return;
+  }
+  document.getElementById('sync-banner-text').textContent = bits.join('  ·  ');
+  banner.style.display = '';
+}
+function dismissSyncBanner() {
+  _syncBannerDismissedSig = _syncAttentionSummary().sig;
+  document.getElementById('sync-banner').style.display = 'none';
+}
+
 // Build CSV string for a trip (same format as exportTrip but returns string)
 function ghBuildCSV(tripId) {
   const trip = trips.find(t => t.id === tripId);
@@ -4813,7 +4955,7 @@ function confirmGhPicker() {
   fn(chosen);
 }
 
-function ghSave() {
+async function ghSave() {
   const token       = document.getElementById('gh-token').value.trim();
   const repoStr     = document.getElementById('gh-repo').value.trim();
   const deviceLabel = document.getElementById('gh-device-label').value.trim() || ghDeviceId();
@@ -4825,11 +4967,31 @@ function ghSave() {
   const eligible = trips.filter(t => events.some(e => e.tripId === t.id));
   if (!eligible.length) { ghLog('⚠ No trips with events to save.', 'warn'); return; }
 
+  // Fetch the remote listing so each trip shows its sync verdict. Trips whose save
+  // would overwrite someone else's newer version start UNCHECKED — saving them must
+  // be a deliberate choice. If the listing fails (offline), degrade to no badges.
+  ghLog('Checking sync state…');
+  let verdicts = new Map();
+  try {
+    const listing = await ghApi('GET', 'data', null, token, owner, repo);
+    if (Array.isArray(listing)) verdicts = classifyTripsAgainstListing(listing);
+  } catch (_) { /* offline or first save — badges just won't show */ }
+
   document.getElementById('gh-log').innerHTML = '';
   showGhPicker(
     'Which trips should be saved to GitHub?',
     '⬆ Save selected',
-    eligible.map(t => ({ key: t.id, label: t.name, checked: true })),
+    eligible.map(t => {
+      const v = verdicts.get(t.id);
+      const meta = v ? SYNC_VERDICT_META[v] : null;
+      const risky = v === 'remote-ahead' || v === 'diverged';
+      return {
+        key: t.id, label: t.name,
+        checked: v !== 'in-sync' && !risky, // in-sync: nothing to do; risky: opt-in only
+        badge: meta ? (risky ? meta.label + ' — save overwrites it' : meta.label) : null,
+        badgeClass: meta ? meta.cls : null,
+      };
+    }),
     ids => executeGhSave(ids, token, owner, repo, repoStr, deviceLabel)
   );
 }
@@ -4848,11 +5010,13 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
     try {
       const existing = await ghApi('GET', `data/${filename}`, null, token, owner, repo);
 
+      let putResult;
       if (existing) {
         // Decode remote content to compare
         const oldCsv = ghDecode(existing.content);
         if (oldCsv === newCsv) {
           ghLog(`→ "${trip.name}" unchanged, skipped`, 'info');
+          recordTripSync(trip, existing.sha); // identical content IS a sync point
           skipped++;
           continue;
         }
@@ -4866,11 +5030,15 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
         }
         // Update current file (sha-safe: recovers if a retry after a lost response
         // collides with our own already-landed write)
-        await ghPutFileSafe(`data/${filename}`, `Update trip: ${trip.name} [${deviceLabel}]`, ghEncode(newCsv), token, owner, repo);
+        putResult = await ghPutFileSafe(`data/${filename}`, `Update trip: ${trip.name} [${deviceLabel}]`, ghEncode(newCsv), token, owner, repo);
       } else {
         // New trip — create from scratch
-        await ghPutFileSafe(`data/${filename}`, `Create trip: ${trip.name} [${deviceLabel}]`, ghEncode(newCsv), token, owner, repo);
+        putResult = await ghPutFileSafe(`data/${filename}`, `Create trip: ${trip.name} [${deviceLabel}]`, ghEncode(newCsv), token, owner, repo);
       }
+      // Record the sync fingerprint (PUT responses nest sha under .content; a
+      // ghPutFileSafe identical-content short-circuit returns the GET shape instead)
+      const newSha = putResult && (putResult.content?.sha ?? putResult.sha);
+      if (newSha) recordTripSync(trip, newSha);
       ghLog(`✓ Saved "${trip.name}"`, 'ok');
       saved++;
     } catch(err) {
@@ -4883,16 +5051,21 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
   if (skipped) parts.push(`${skipped} unchanged`);
   if (failed)  parts.push(`${failed} failed`);
   ghLog(`Done — ${parts.join(', ')}.`, saved > 0 ? 'ok' : skipped > 0 ? 'info' : 'warn');
+  checkSyncStatus(true); // refresh the banner/badge with the new state
 }
 
 // ── GH LOAD WARNING / SLIDER ───────────────────────────────────────────────────
 let ghSlideState = null;
 let ghPendingLoad = null;
 
-function showGhLoadWarning(token, owner, repo, selectedNames, replaceCount) {
+function showGhLoadWarning(token, owner, repo, selectedNames, replaceCount, losingNames = []) {
   ghPendingLoad = { token, owner, repo, selectedNames };
-  document.getElementById('gh-warn-text').textContent =
-    `${replaceCount} of the selected trip${replaceCount !== 1 ? 's' : ''} will replace a trip you have locally (matched by name). This cannot be undone.`;
+  let msg = `${replaceCount} of the selected trip${replaceCount !== 1 ? 's' : ''} will replace a trip you have locally (matched by name).`;
+  if (losingNames.length) {
+    const names = losingNames.map(n => `“${n.replace(/\.csv$/, '').replace(/_/g, ' ')}”`).join(', ');
+    msg += ` ⚠ ${names} ${losingNames.length === 1 ? 'has' : 'have'} UNSAVED LOCAL EDITS that this load will discard — a backup of the local version is uploaded to data/history/ first, but the calendar will show GitHub's version.`;
+  }
+  document.getElementById('gh-warn-text').textContent = msg;
   document.getElementById('gh-load-warn').style.display = '';
   document.getElementById('gh-actions').style.display   = 'none';
   document.getElementById('gh-log').innerHTML = '';
@@ -5002,23 +5175,41 @@ async function ghLoad() {
   if (!files.length) { ghLog('No .csv files found in /data/.', 'warn'); return; }
 
   document.getElementById('gh-log').innerHTML = '';
-  const localFilenames = new Set(trips.map(t => ghTripFilename(t)));
-  const items = files.map(f => ({
-    key: f.name,
-    label: f.name.replace(/\.csv$/, '').replace(/_/g, ' '),
-    checked: true,
-    badge: localFilenames.has(f.name) ? 'will replace local' : 'new',
-    badgeClass: localFilenames.has(f.name) ? 'replace' : 'new',
-  }));
+  // Verdict per remote file (from the local trip with the matching filename):
+  // drives the badge, the default checkbox, and how scary the confirm gate is.
+  const tripByFilename = new Map(trips.filter(t => events.some(e => e.tripId === t.id)).map(t => [ghTripFilename(t), t]));
+  const verdictByName = new Map();
+  for (const f of files) {
+    const local = tripByFilename.get(f.name);
+    verdictByName.set(f.name, local
+      ? syncVerdict(syncState[f.name] || null, strHash(ghBuildCSV(local.id) || ''), f.sha)
+      : (trips.some(t => ghTripFilename(t) === f.name) ? 'never-synced' : 'new'));
+  }
+  const items = files.map(f => {
+    const v = verdictByName.get(f.name);
+    const meta = SYNC_VERDICT_META[v] || SYNC_VERDICT_META['never-synced'];
+    const losesLocal = v === 'local-ahead' || v === 'diverged';
+    return {
+      key: f.name,
+      label: f.name.replace(/\.csv$/, '').replace(/_/g, ' '),
+      // Sensible defaults: pull what's newer/new; never pre-check a load that would
+      // discard local edits, or one that changes nothing.
+      checked: v === 'remote-ahead' || v === 'new' || v === 'never-synced',
+      badge: losesLocal ? meta.label + ' — load discards them' : meta.label,
+      badgeClass: meta.cls,
+    };
+  });
   showGhPicker(
     'Which trips should be loaded from GitHub?',
     '⬇ Load selected',
     items,
     names => {
-      const replaceCount = names.filter(n => localFilenames.has(n)).length;
-      // The slide-to-confirm gate only matters when something local actually gets
-      // replaced — loading brand-new trips is harmless and shouldn't need it.
-      if (replaceCount > 0) showGhLoadWarning(token, owner, repo, names, replaceCount);
+      const losing = names.filter(n => ['local-ahead', 'diverged'].includes(verdictByName.get(n)));
+      const replacing = names.filter(n => trips.some(t => ghTripFilename(t) === n));
+      // Gate only loads that actually touch something local; extra-red when local
+      // edits would be discarded (they're backed up to history first, see
+      // executeGhLoad, but the user should still decide deliberately).
+      if (replacing.length > 0) showGhLoadWarning(token, owner, repo, names, replacing.length, losing);
       else executeGhLoad(token, owner, repo, names);
     }
   );
@@ -5066,6 +5257,22 @@ async function executeGhLoad(token, owner, repo, selectedNames = null) {
       let existingTrip = trips.find(t => t.name === tripName);
       let tripId;
       if (existingTrip) {
+        // Safety net: if the local copy has edits GitHub doesn't have (local-ahead
+        // or diverged), archive the LOCAL version to history before wiping it —
+        // "I loaded and lost my unsaved events" becomes recoverable.
+        const localCsv = ghBuildCSV(existingTrip.id);
+        if (localCsv != null) {
+          const v = syncVerdict(syncState[file.name] || null, strHash(localCsv), file.sha);
+          if (v === 'local-ahead' || v === 'diverged' || v === 'never-synced') {
+            try {
+              const histName = ghHistoryFilename(existingTrip, (ghConfig().device || ghDeviceId()) + '-localbackup');
+              await ghPutFileSafe(`data/history/${histName}`, `Backup local version before load: ${tripName}`, ghEncode(localCsv), token, owner, repo);
+              ghLog(`  ↳ local version backed up to history as ${histName}`, 'info');
+            } catch (bErr) {
+              ghLog(`  ⚠ Local backup failed (${bErr.message}) — continuing with load`, 'warn');
+            }
+          }
+        }
         events = events.filter(e => e.tripId !== existingTrip.id);
         existingTrip.color = tripColor;
         tripId = existingTrip.id;
@@ -5117,6 +5324,9 @@ async function executeGhLoad(token, owner, repo, selectedNames = null) {
           if (targetId) { const ev = events.find(e => e.id === evId); if (ev) ev.linkedNextId = targetId; }
         }
       }
+      // Loading IS a sync point — fingerprint the freshly-imported state
+      const loadedTrip = trips.find(t => t.id === tripId);
+      if (loadedTrip) recordTripSync(loadedTrip, file.sha);
       ghLog(`✓ "${tripName}" loaded`, 'ok');
     } catch(err) {
       ghLog(`✗ "${file.name}": ${err.message}`, 'error');
@@ -5125,6 +5335,7 @@ async function executeGhLoad(token, owner, repo, selectedNames = null) {
   }
 
   save(); renderSidebar(); render();
+  checkSyncStatus(true); // refresh the banner/badge with the new state
   const summary = [
     loaded   ? `${loaded} new`     : '',
     replaced ? `${replaced} updated` : '',
