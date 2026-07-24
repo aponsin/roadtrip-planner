@@ -103,12 +103,12 @@ body {
   transition: background .15s; flex-shrink: 0;
 }
 .btn-gh-sync:hover { background: rgba(255,255,255,.2); }
-.btn-debug-toggle {
+.form-debug-toggle {
   background: none; border: none; cursor: pointer; font-size: 13px;
-  opacity: .18; padding: 4px 6px; margin-left: 2px; transition: opacity .15s;
+  opacity: .22; padding: 2px 5px; transition: opacity .15s; line-height: 1;
 }
-.btn-debug-toggle:hover { opacity: .55; }
-.btn-debug-toggle.on { opacity: 1; filter: drop-shadow(0 0 3px #fbbf24); }
+.form-debug-toggle:hover { opacity: .6; }
+.form-debug-toggle.on { opacity: 1; filter: drop-shadow(0 0 3px #fbbf24); }
 .form-debug {
   background: #fefce8; border: 1px solid #fde047; border-radius: 8px;
   padding: 8px 10px; margin-bottom: 10px; font-size: 11px; line-height: 1.6;
@@ -1289,7 +1289,6 @@ body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
     <span class="sync-label">Sync</span>
   </button>
   <button class="btn-new-event" onclick="openForm()">＋ New Event</button>
-  <button class="btn-debug-toggle" id="btn-debug-toggle" onclick="toggleDebugMode()" title="Debug mode — explains New Event defaults">🐞</button>
 </header>
 
 <!-- GitHub Sync Modal -->
@@ -1380,6 +1379,7 @@ body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
     <div class="form-head-row">
       <button class="form-nav-btn" id="form-nav-prev" onclick="formNavStep(-1)" title="Previous event">‹</button>
       <div class="form-head" id="form-head">New Event</div>
+      <button class="form-debug-toggle" id="form-debug-toggle" onclick="toggleDebugMode()" title="Why these defaults? Toggle the explanation">🐞</button>
       <button class="form-nav-btn" id="form-nav-next" onclick="formNavStep(1)"  title="Next event">›</button>
     </div>
     <div id="form-debug" class="form-debug" style="display:none"></div>
@@ -1954,7 +1954,6 @@ function init() {
   document.addEventListener('wheel', hideBarHover, { passive: true });
   window.addEventListener('resize', () => { renderCalHeader(); renderCal(); });
   initGhSlider();
-  document.getElementById('btn-debug-toggle')?.classList.toggle('on', debugMode);
 }
 
 // ── PERSISTENCE ────────────────────────────────────────────────────────────────
@@ -4524,6 +4523,76 @@ function ghHistoryFilename(trip, deviceLabel) {
   return `${base}_${ts}_${device}.csv`;
 }
 
+// ── SYNC STATE (multi-device drift detection) ─────────────────────────────────
+// The app used to have no memory of "what did I last sync?", so it couldn't tell
+// whether local or GitHub was ahead — and edits made on one device were silently
+// overwritten from another. Now every save/load records a per-trip fingerprint:
+// the GitHub file sha AND a hash of the local CSV at that moment. Comparing both
+// sides against that fingerprint classifies each trip in one cheap listing call.
+const SYNC_STATE_KEY = 'rtp4_sync_state';
+let syncState = {};
+try { syncState = JSON.parse(localStorage.getItem(SYNC_STATE_KEY) || '{}'); } catch { syncState = {}; }
+function saveSyncState() { try { localStorage.setItem(SYNC_STATE_KEY, JSON.stringify(syncState)); } catch (_) {} }
+
+// Fast non-crypto string hash (FNV-1a) — fingerprints a trip's CSV locally.
+function strHash(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(16);
+}
+
+// Pure verdict logic (unit-tested): compare the stored fingerprint against the
+// current local hash and current remote sha.
+//   'new'          — trip exists only locally (nothing on GitHub yet)
+//   'never-synced' — remote file exists but THIS device has never synced it
+//   'in-sync'      — neither side changed since the last sync
+//   'local-ahead'  — edited here since last sync (unsaved changes)
+//   'remote-ahead' — the other device saved since our last sync
+//   'diverged'     — BOTH changed: the dangerous case (was previously undetectable)
+//   'remote-missing' — we synced it before but the file is gone from GitHub
+function syncVerdict(stored, localHash, remoteSha) {
+  if (remoteSha == null) return stored ? 'remote-missing' : 'new';
+  if (!stored) return 'never-synced';
+  const localChanged  = localHash !== stored.csvHash;
+  const remoteChanged = remoteSha !== stored.remoteSha;
+  if (localChanged && remoteChanged) return 'diverged';
+  if (localChanged)  return 'local-ahead';
+  if (remoteChanged) return 'remote-ahead';
+  return 'in-sync';
+}
+
+function recordTripSync(trip, remoteSha) {
+  const csv = ghBuildCSV(trip.id);
+  if (csv == null || !remoteSha) return;
+  syncState[ghTripFilename(trip)] = { remoteSha, csvHash: strHash(csv), at: Date.now() };
+  saveSyncState();
+}
+
+// Classify every local trip (with events) against a remote /data listing
+// (array of {name, sha}); returns Map<tripId, verdict>.
+function classifyTripsAgainstListing(listing) {
+  const remoteShaByName = new Map((listing || []).filter(f => f.name.endsWith('.csv')).map(f => [f.name, f.sha]));
+  const verdicts = new Map();
+  for (const trip of trips) {
+    const csv = ghBuildCSV(trip.id);
+    if (csv == null) continue; // no events — nothing to sync
+    const fname = ghTripFilename(trip);
+    verdicts.set(trip.id, syncVerdict(syncState[fname] || null, strHash(csv), remoteShaByName.get(fname) ?? null));
+  }
+  return verdicts;
+}
+
+// Human labels + picker badge styling per verdict, shared by save/load pickers.
+const SYNC_VERDICT_META = {
+  'in-sync':        { label: 'in sync ✓',                        cls: 'insync' },
+  'local-ahead':    { label: 'unsaved local changes',            cls: 'local' },
+  'remote-ahead':   { label: 'newer on GitHub',                  cls: 'remote' },
+  'diverged':       { label: '⚠ changed on BOTH devices',        cls: 'diverged' },
+  'never-synced':   { label: 'not synced from this device yet',  cls: 'unknown' },
+  'new':            { label: 'new — not on GitHub yet',          cls: 'newtrip' },
+  'remote-missing': { label: 'missing on GitHub',                cls: 'unknown' },
+};
+
 // Build CSV string for a trip (same format as exportTrip but returns string)
 function ghBuildCSV(tripId) {
   const trip = trips.find(t => t.id === tripId);
@@ -5569,14 +5638,28 @@ function positionOverlay() {
 }
 
 // ── Debug mode ────────────────────────────────────────────────────────────────
-// Discreet 🐞 toggle in the header (persisted). When on, the New Event form shows a
-// plain-language box explaining exactly how the suggested trip and start time were
-// chosen — for diagnosing "why did it default to THAT?" without dev tools.
+// Discreet 🐞 toggle in the New Event form's own header (persisted). The reasoning
+// behind the current form's defaults is stashed when the form opens, so the toggle
+// works retroactively: open a form, find the suggested trip/time weird, tap 🐞 right
+// there — the explanation for THIS form appears on the spot. No dev tools needed.
 let debugMode = localStorage.getItem('rtp4_debug') === '1';
+let _formDebugStash = null; // { debug, tripId } captured when a New Event form opens
 function toggleDebugMode() {
   debugMode = !debugMode;
   localStorage.setItem('rtp4_debug', debugMode ? '1' : '0');
-  document.getElementById('btn-debug-toggle').classList.toggle('on', debugMode);
+  renderFormDebug();
+}
+function renderFormDebug() {
+  const btn = document.getElementById('form-debug-toggle');
+  const box = document.getElementById('form-debug');
+  if (btn) btn.classList.toggle('on', debugMode);
+  if (!box) return;
+  if (debugMode && _formDebugStash) {
+    box.textContent = describeNewEventDefaults(_formDebugStash.debug, _formDebugStash.tripId);
+    box.style.display = '';
+  } else {
+    box.style.display = 'none';
+  }
 }
 
 function describeNewEventDefaults(debug, resolvedTripId) {
@@ -5619,7 +5702,10 @@ function openForm(evObj, defaultDate, defaultTripId, newEventDebug) {
 
   routeData = null;
 
-  document.getElementById('form-debug').style.display = 'none'; // only New Event + debug mode shows it
+  // Debug is a New-Event-only affordance: editing an existing event involved no
+  // trip/time guessing, so there's nothing to explain (and no stash to show).
+  _formDebugStash = null;
+  document.getElementById('form-debug-toggle').style.display = evObj ? 'none' : '';
 
   if (evObj) {
     editingId = evObj.id;
@@ -5682,11 +5768,9 @@ function openForm(evObj, defaultDate, defaultTripId, newEventDebug) {
     document.getElementById('f-trip').value  = resolveDefaultTripId(defaultTripId) ?? '';
     const now = defaultDate ? snap15(defaultDate) : (() => { const d = new Date(); d.setHours(9, 0, 0, 0); return d; })();
     setStartFields(now);
-    if (debugMode) {
-      const dbgEl = document.getElementById('form-debug');
-      dbgEl.textContent = describeNewEventDefaults(newEventDebug, resolveDefaultTripId(defaultTripId));
-      dbgEl.style.display = '';
-    }
+    // Stash the reasoning so tapping 🐞 — even AFTER the form is open — can explain
+    // this specific form's defaults.
+    _formDebugStash = { debug: newEventDebug || null, tripId: resolveDefaultTripId(defaultTripId) };
     document.getElementById('f-dur-h').value = 1;
     document.getElementById('f-dur-m').value = 0;
     document.getElementById('f-desc').value  = '';
@@ -5721,6 +5805,7 @@ function openForm(evObj, defaultDate, defaultTripId, newEventDebug) {
     updateDiningLink();
     updateSightseeingLink();
   }
+  renderFormDebug(); // shows the reasoning box (New Event + debug on), hides it otherwise
   updateFormNav();
   setTimeout(() => document.getElementById('f-title').focus(), 60);
 }
