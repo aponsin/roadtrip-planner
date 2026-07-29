@@ -155,6 +155,8 @@ body {
 .gh-btn.save:hover { background: #1e293b; }
 .gh-btn.load { background: #fff; color: #0f172a; }
 .gh-btn.load:hover { background: #f1f5f9; }
+.gh-btn:disabled { opacity: .4; cursor: not-allowed; }
+.gh-btn:disabled:hover { background: inherit; }
 .gh-log {
   max-height: 160px; overflow-y: auto;
   background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 7px;
@@ -363,43 +365,12 @@ body {
 .import-cleanup-link:hover { color: #64748b; text-decoration: underline; }
 
 /* ── GH LOAD WARNING + SLIDER ──────────── */
-#gh-load-warn { margin-top: 12px; }
-.gh-warn-banner {
-  display: flex; gap: 14px; align-items: flex-start;
-  background: #fef2f2; border: 1.5px solid #fca5a5;
-  border-radius: 10px; padding: 14px 16px; margin-bottom: 14px;
+.gh-btn.load { position: relative; overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; }
+.gh-btn-fill {
+  position: absolute; inset: 0; width: 0%; background: rgba(217, 119, 6, .35);
+  pointer-events: none;
 }
-.gh-warn-icon { font-size: 26px; line-height: 1; flex-shrink: 0; }
-.gh-warn-msg strong { display: block; color: #991b1b; font-size: 14px; margin-bottom: 5px; }
-.gh-warn-msg p { color: #7f1d1d; font-size: 12px; margin: 0; line-height: 1.55; }
-.gh-slide-track {
-  position: relative; height: 54px;
-  background: #f1f5f9; border: 1.5px solid #e2e8f0;
-  border-radius: 27px; overflow: hidden;
-  user-select: none; margin-bottom: 10px; cursor: pointer;
-}
-.gh-slide-fill {
-  position: absolute; left: 0; top: 0; height: 100%;
-  background: linear-gradient(90deg, #fee2e2, #fca5a5);
-  width: 54px; border-radius: 27px; pointer-events: none;
-}
-.gh-slide-label {
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 600; color: #94a3b8;
-  pointer-events: none; user-select: none; letter-spacing: .2px;
-}
-.gh-slide-thumb {
-  position: absolute; left: 5px; top: 5px;
-  width: 44px; height: 44px; z-index: 2;
-  background: #dc2626; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 19px; color: #fff; cursor: grab;
-  box-shadow: 0 2px 8px rgba(220,38,38,.35);
-  transition: background .25s;
-}
-.gh-slide-thumb:active { cursor: grabbing; }
-.gh-slide-thumb.done   { background: #16a34a; box-shadow: 0 2px 8px rgba(22,163,74,.35); }
+.gh-btn-label { position: relative; pointer-events: none; }
 /* ── DAY CONTEXT MENU ───────────────────── */
 #day-ctx-menu {
   background: #fff;
@@ -444,6 +415,16 @@ body {
   position: fixed; bottom: 24px; right: 24px;
   display: flex; gap: 8px; z-index: 300;
 }
+/* Undo/Redo must never float on top of a pop-in — hide them entirely while any
+   modal/sheet is open (event form, trip summary, photo import, sync, share,
+   lightbox). :has() is supported on all target browsers; on anything older this
+   degrades to the previous behavior. */
+body:has(#form-overlay:not(.closed)) .undo-area,
+body:has(#trip-viz-overlay.open) .undo-area,
+body:has(#import-overlay.open) .undo-area,
+body:has(#gh-modal.open) .undo-area,
+body:has(#share-modal.open) .undo-area,
+body:has(#photo-lightbox.open) .undo-area { display: none !important; }
 .undo-area button {
   background: #fff; border: 1.5px solid #cbd5e1; color: #94a3b8;
   padding: 7px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
@@ -603,12 +584,15 @@ body {
 
 /* Trip items */
 .trip-item {
-  display: flex; align-items: center; gap: 7px;
+  /* Two-line layout: the name gets the full row, actions live on their own line —
+     one line couldn't fit a readable name next to six action icons. */
+  display: flex; flex-direction: column; gap: 3px;
   padding: 6px 7px; border-radius: 7px;
   transition: background .1s; margin-bottom: 2px;
   min-width: 0;
 }
 .trip-item:hover { background: var(--bg); }
+.trip-main { display: flex; align-items: center; gap: 7px; min-width: 0; }
 
 .trip-vis {
   width: 17px; height: 17px; border-radius: 4px;
@@ -633,9 +617,12 @@ body {
   outline: none; background: none; font-family: inherit;
   min-width: 0; padding: 0;
 }
-.trip-acts { display: flex; gap: 1px; flex-shrink: 0; }
+.trip-acts {
+  display: flex; gap: 3px; flex-shrink: 0;
+  padding-left: 24px; /* aligns under the trip name (checkbox 17px + gap 7px) */
+}
 .trip-act-btn {
-  width: 20px; height: 20px; border-radius: 4px;
+  width: 24px; height: 22px; border-radius: 4px;
   background: none; border: none; cursor: pointer;
   font-size: 11px; color: #94a3b8;
   display: flex; align-items: center; justify-content: center;
@@ -831,6 +818,14 @@ body {
 @media (max-width: 680px) {
   :root { --lbl-w: 56px; }
 
+  /* Trip rows: finger-sized action targets, spread across the row */
+  .trip-item { padding: 8px 7px; gap: 5px; }
+  .trip-name { font-size: 13px; }
+  .trip-vis { width: 20px; height: 20px; }
+  .trip-acts { padding-left: 27px; justify-content: space-between; gap: 0; }
+  .trip-act-btn { width: 34px; height: 30px; font-size: 13px; }
+  .trip-act-btn svg { width: 15px; height: 15px; }
+
   /* Two-row header on mobile */
   :root { --hdr: 92px; }
   .hdr { flex-wrap: wrap; align-content: center; height: var(--hdr); padding: 0 10px; gap: 6px 8px; }
@@ -857,13 +852,16 @@ body {
   /* New event button */
   .btn-new-event { padding: 6px 12px; font-size: 13px; }
 
-  /* Form: full-screen bottom sheet */
+  /* Form: full-screen bottom sheet. Max height is measured from BELOW the fixed
+     header (92px on mobile) — a flat 92vh let a tall form (e.g. with the debug box
+     visible) slide its top rows underneath the menu bar, unreachable. */
   .form-overlay { padding-top: 0 !important; align-items: flex-end !important; }
   .form-panel   {
     width: 100% !important;
     max-width: 100% !important;
     border-radius: 16px 16px 0 0 !important;
-    max-height: 92vh !important;
+    max-height: calc(100vh - var(--hdr) - 8px) !important;
+    max-height: calc(100dvh - var(--hdr) - 8px) !important; /* dvh: correct under iOS toolbars */
     overflow-y: auto;
     padding-bottom: 24px;
   }
@@ -881,13 +879,17 @@ body {
   /* Popover: full width on mobile */
   #pop { width: min(320px, calc(100vw - 24px)) !important; }
 
-  /* Sticky form nav buttons on mobile */
+  /* Sticky form nav buttons on mobile. No vertical negative-margin tricks: the
+     panel's own top padding is removed instead, so the header's natural position
+     IS its stuck position (top: 0) — the old stale offsets (-16px vs the panel's
+     22px padding) made the bar overlap the Title/Category row. */
+  .form-panel { padding-top: 0 !important; }
   .form-head-row {
-    position: sticky; top: 0; z-index: 1;
-    background: var(--surface, #fff);
+    position: sticky; top: 0; z-index: 5;
+    background: #fff;
     border-bottom: 1px solid var(--border, #e2e8f0);
-    margin: -16px -20px 10px;
-    padding: 10px 20px;
+    margin: 0 -24px 12px;
+    padding: 12px 24px 10px;
   }
 }
 
@@ -1358,37 +1360,23 @@ body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
       Trip data is stored as CSV files in a <code>/data/</code> folder in your repo. Older versions are automatically archived to <code>/data/history/</code> before each save. Your token is saved only in this browser's localStorage — never sent anywhere except GitHub.<br>
       <a href="https://github.com/settings/tokens/new?scopes=repo&description=Road+Trip+Planner" target="_blank">Create a token with <code>repo</code> scope →</a>
     </p>
+    <!-- Live per-trip sync status, shown immediately on open (no click needed) -->
+    <div id="gh-status" style="display:none">
+      <div class="gh-picker-title">Select trips — this device vs GitHub</div>
+      <button type="button" class="gh-picker-toggle" onclick="ghStatusToggleAll()">Select / deselect all</button>
+      <div class="gh-picker-list" id="gh-status-list"></div>
+    </div>
     <div class="gh-actions" id="gh-actions">
       <button class="gh-btn save" onclick="ghSave()">⬆ Save to GitHub</button>
-      <button class="gh-btn load" onclick="ghLoad()">⬇ Load from GitHub</button>
+      <button class="gh-btn load" id="gh-load-btn"
+        onpointerdown="ghLoadPress(event)" onpointerup="ghLoadRelease(event)"
+        onpointercancel="ghLoadRelease(event)" onpointerleave="ghLoadRelease(event)"
+        onclick="ghLoadClickHint(event)">
+        <span class="gh-btn-fill" id="gh-load-fill"></span>
+        <span class="gh-btn-label" id="gh-load-label">⬇ Load from GitHub</span>
+      </button>
     </div>
-    <!-- Trip picker (shown before save/load so only selected trips are touched) -->
-    <div id="gh-picker" style="display:none">
-      <div class="gh-picker-title" id="gh-picker-title"></div>
-      <button type="button" class="gh-picker-toggle" id="gh-picker-toggle" onclick="toggleGhPickerAll()">Deselect all</button>
-      <div class="gh-picker-list" id="gh-picker-list"></div>
-      <div class="gh-actions">
-        <button class="gh-btn save" id="gh-picker-confirm" onclick="confirmGhPicker()">Continue</button>
-        <button class="gh-btn" style="background:#f1f5f9;color:#475569;border:1px solid #e2e8f0" onclick="cancelGhPicker()">✕ Cancel</button>
-      </div>
-    </div>
-    <!-- Load-override warning (shown only when local trips exist) -->
-    <div id="gh-load-warn" style="display:none">
-      <div class="gh-warn-banner">
-        <div class="gh-warn-icon">⚠️</div>
-        <div class="gh-warn-msg">
-          <strong>This will override existing trips</strong>
-          <p id="gh-warn-text"></p>
-        </div>
-      </div>
-      <div class="gh-slide-track" id="gh-slide-track">
-        <div class="gh-slide-fill"  id="gh-slide-fill"></div>
-        <div class="gh-slide-label" id="gh-slide-label">Slide to confirm →</div>
-        <div class="gh-slide-thumb" id="gh-slide-thumb">⬇</div>
-      </div>
-      <button class="gh-btn" style="background:#f1f5f9;color:#475569;border:1px solid #e2e8f0" onclick="cancelGhLoad()">✕ Cancel</button>
-    </div>
-    <div class="gh-log" id="gh-log"></div>
+<div class="gh-log" id="gh-log"></div>
   </div>
 </div>
 
@@ -2003,23 +1991,57 @@ function init() {
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('wheel', hideBarHover, { passive: true });
   window.addEventListener('resize', () => { renderCalHeader(); renderCal(); });
-  initGhSlider();
 
   // Multi-device drift detection: check at open, when the tab regains focus (the
   // moment you switch from the other device), and every 5 minutes while open.
   setTimeout(() => checkSyncStatus(), 2500); // let initial render settle first
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkSyncStatus(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    adoptExternalStateIfChanged(); // a revived/other tab may have written newer state
+    checkSyncStatus();
+  });
   setInterval(() => { if (!document.hidden) checkSyncStatus(); }, SYNC_CHECK_INTERVAL_MS);
+
+  // SAME-DEVICE convergence: two tabs (or an iOS-frozen page revived hours later)
+  // share localStorage but keep separate in-memory copies. A stale tab's next save()
+  // used to clobber everything a fresher tab had written — events/photos "vanishing"
+  // with no network involved. Now any outside write is adopted into memory (deferred
+  // while the event form is open so it can't yank the user's editing session).
+  window.addEventListener('storage', e => {
+    if (e.key !== 'rtp4' || e.newValue == null || e.newValue === _lastKnownStateRaw) return;
+    adoptExternalStateIfChanged();
+  });
+}
+
+let _externalStatePending = false;
+function isEventFormOpen() {
+  const o = document.getElementById('form-overlay');
+  return o && o.style.display !== 'none' && !o.classList.contains('closed');
+}
+function adoptExternalStateIfChanged() {
+  let raw = null;
+  try { raw = localStorage.getItem('rtp4'); } catch (_) { return; }
+  if (raw == null || raw === _lastKnownStateRaw) return;
+  if (isEventFormOpen()) { _externalStatePending = true; return; } // apply on form close
+  _externalStatePending = false;
+  loadState();
+  renderSidebar(); refreshTripSelect(); render();
 }
 
 // ── PERSISTENCE ────────────────────────────────────────────────────────────────
+// Tracks the last state string THIS tab wrote or read — lets us detect when another
+// tab (or this page's own past life, before iOS froze it) changed storage under us.
+let _lastKnownStateRaw = null;
+
 function save() {
   try {
-    localStorage.setItem('rtp4', JSON.stringify({
+    const raw = JSON.stringify({
       trips, unassVis, nextTripId, nextEvId,
       viewStart: viewStart.getTime(),
       events: events.map(e => ({ ...e, start: e.start.getTime(), end: e.end.getTime() })),
-    }));
+    });
+    localStorage.setItem('rtp4', raw);
+    _lastKnownStateRaw = raw;
   } catch (_) {}
 }
 
@@ -2027,6 +2049,7 @@ function loadState() {
   try {
     const raw = localStorage.getItem('rtp4');
     if (!raw) return;
+    _lastKnownStateRaw = raw;
     const d = JSON.parse(raw);
     trips      = d.trips      || [];
     unassVis   = d.unassVis  !== false;
@@ -2219,10 +2242,12 @@ function renderSidebar() {
 
     return `
       <div class="trip-item">
-        <div class="trip-vis ${vis?'on':''}" style="color:${t.color}"
-          onclick="toggleTripVis(${t.id})" title="${vis?'Hide':'Show'} events"></div>
-        <div class="trip-dot" style="background:${t.color}"></div>
-        ${nameHTML}
+        <div class="trip-main">
+          <div class="trip-vis ${vis?'on':''}" style="color:${t.color}"
+            onclick="toggleTripVis(${t.id})" title="${vis?'Hide':'Show'} events"></div>
+          <div class="trip-dot" style="background:${t.color}"></div>
+          ${nameHTML}
+        </div>
         <div class="trip-acts">
           <button class="trip-act-btn" onclick="openTripViz(${t.id})" title="Trip summary"><svg width="13" height="10" viewBox="0 0 13 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 5C1 5 3.2 1.5 6.5 1.5C9.8 1.5 12 5 12 5C12 5 9.8 8.5 6.5 8.5C3.2 8.5 1 5 1 5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="6.5" cy="5" r="1.6" fill="currentColor"/></svg></button>
           <button class="trip-act-btn import-photos-btn" onclick="openImportModal(${t.id})" title="Import photos${tripPendingCount ? ` (${tripPendingCount} to review)` : ''}">
@@ -2724,10 +2749,17 @@ function renderLightbox() {
   if (_lightboxIndex >= _lightboxPhotos.length) _lightboxIndex = 0;
   const img = document.getElementById('lightbox-img');
   img.style.display = '';
+  let lightboxRetried = false;
   img.onerror = () => {
+    // One cache-busted retry first: raw.githubusercontent caches 404s for freshly
+    // uploaded files, so a photo synced moments ago may "fail" while sitting safely
+    // on GitHub. Only then treat it as genuinely gone and drop it from this session.
+    if (!lightboxRetried && /raw\.githubusercontent\.com/.test(img.src)) {
+      lightboxRetried = true;
+      img.src = img.src.split('?')[0] + '?retry=' + Date.now();
+      return;
+    }
     img.onerror = null;
-    // Photo is broken (e.g. deleted from another device) — silently drop it
-    // from this viewing session and move on to the next one, if any.
     _lightboxPhotos.splice(_lightboxIndex, 1);
     renderLightbox();
   };
@@ -2913,7 +2945,24 @@ const PHOTO_MAX_COUNT = 9;
 // visually indicates a photo was ever there.
 // wrapperSelector: optional selector for an ancestor to remove instead of the <img>
 // itself (e.g. the event form's '.f-photo-thumb' card, which also holds a remove button).
+// Broken photo handling for event thumbnails (form grid, popover, Trip Summary).
+// CRITICAL: retry with a cache-busting query BEFORE hiding. raw.githubusercontent
+// serves 404s for freshly-uploaded files for a few minutes AND caches those 404s
+// per-URL — so hiding on the first failure made photos synced from another device
+// "vanish" everywhere (even on the device that uploaded them, once it refreshed),
+// while the files sat safely on GitHub the whole time. The cache-buster bypasses
+// the CDN's cached 404; only after several spaced attempts do we hide for real
+// (which then correctly covers genuinely-deleted photos, Section 21.7).
 function hideBrokenPhotoThumb(imgEl, wrapperSelector) {
+  const attempt = parseInt(imgEl.dataset.retry || '0', 10) + 1;
+  imgEl.dataset.retry = attempt;
+  const delays = [2000, 5000, 12000];
+  if (attempt <= delays.length && /raw\.githubusercontent\.com/.test(imgEl.src)) {
+    const base = imgEl.dataset.baseSrc || imgEl.src.split('?')[0];
+    imgEl.dataset.baseSrc = base;
+    setTimeout(() => { imgEl.src = base + '?retry=' + Date.now(); }, delays[attempt - 1]);
+    return;
+  }
   const wrapper = wrapperSelector ? imgEl.closest(wrapperSelector) : imgEl;
   if (!wrapper) return;
   const container = wrapper.parentElement;
@@ -4677,6 +4726,7 @@ const SYNC_CHECK_MIN_GAP_MS  = 45 * 1000; // focus + timer bursts shouldn't stac
 let _lastSyncCheckAt = 0;
 let _syncBannerDismissedSig = null;
 let _lastSyncVerdicts = new Map();
+let _lastSyncListing = null; // last /data listing, for the Sync modal's status list
 
 async function checkSyncStatus(force = false) {
   if (readOnlyMode) return;
@@ -4691,8 +4741,89 @@ async function checkSyncStatus(force = false) {
     listing = await ghApi('GET', 'data', null, cfg.token, owner, repo);
   } catch (_) { return; } // offline — try again next cycle
   if (!Array.isArray(listing)) return;
+  _lastSyncListing = listing;
   _lastSyncVerdicts = classifyTripsAgainstListing(listing);
   renderSyncStatusUI();
+  renderGhStatusList(); // keep the Sync modal's status list live too
+}
+
+// The Sync modal's trip list — visible immediately on open, with a checkbox per trip
+// (keyed by CSV filename, so local trips and GitHub-only trips share one namespace).
+// Save/Load act directly on the checked trips; both buttons stay disabled until at
+// least one APPLICABLE trip is checked (Save needs a checked local trip, Load a
+// checked trip that exists on GitHub).
+let _ghStatusChecked = new Set();
+function ghStatusToggle(key, on) {
+  if (on) _ghStatusChecked.add(key); else _ghStatusChecked.delete(key);
+  updateGhActionButtons();
+}
+function ghStatusToggleAll() {
+  const keys = [...document.querySelectorAll('#gh-status-list input[data-gh-key]')].map(cb => cb.dataset.ghKey);
+  const allOn = keys.length && keys.every(k => _ghStatusChecked.has(k));
+  keys.forEach(k => allOn ? _ghStatusChecked.delete(k) : _ghStatusChecked.add(k));
+  renderGhStatusList();
+}
+function renderGhStatusList() {
+  const wrap = document.getElementById('gh-status');
+  const list = document.getElementById('gh-status-list');
+  if (!wrap || !list) return;
+  if (!document.getElementById('gh-modal')?.classList.contains('open')) return;
+
+  const localTrips = trips.filter(t => events.some(e => e.tripId === t.id));
+  const rows = [];
+  for (const t of localTrips) {
+    const key = ghTripFilename(t);
+    const v = _lastSyncListing ? (_lastSyncVerdicts.get(t.id) || 'never-synced') : null;
+    const meta = v ? (SYNC_VERDICT_META[v] || SYNC_VERDICT_META['never-synced']) : { label: 'checking…', cls: 'unknown' };
+    rows.push(`<label class="gh-picker-item">
+      <input type="checkbox" data-gh-key="${esc(key)}" ${_ghStatusChecked.has(key) ? 'checked' : ''} onchange="ghStatusToggle('${esc(key)}', this.checked)">
+      <span class="gh-picker-name">${esc(t.name)}</span>
+      <span class="gh-picker-badge ${meta.cls}">${meta.label}</span>
+    </label>`);
+  }
+  if (_lastSyncListing) {
+    const localFilenames = new Set(localTrips.map(t => ghTripFilename(t)));
+    for (const f of _lastSyncListing.filter(f => f.name.endsWith('.csv'))) {
+      if (localFilenames.has(f.name)) continue;
+      rows.push(`<label class="gh-picker-item">
+        <input type="checkbox" data-gh-key="${esc(f.name)}" ${_ghStatusChecked.has(f.name) ? 'checked' : ''} onchange="ghStatusToggle('${esc(f.name)}', this.checked)">
+        <span class="gh-picker-name">${esc(f.name.replace(/\.csv$/, '').replace(/_/g, ' '))}</span>
+        <span class="gh-picker-badge remote">on GitHub only</span>
+      </label>`);
+    }
+  }
+  wrap.style.display = rows.length ? '' : 'none';
+  list.innerHTML = rows.join('');
+  updateGhActionButtons();
+}
+
+// Save: enabled only when a checked trip exists locally. Load: only when a checked
+// trip exists on GitHub. Nothing checked → both grayed out.
+function updateGhActionButtons() {
+  const saveBtn = document.querySelector('#gh-actions .gh-btn.save');
+  const loadBtn = document.getElementById('gh-load-btn');
+  if (!saveBtn || !loadBtn) return;
+  const localFn = new Set(trips.filter(t => events.some(e => e.tripId === t.id)).map(t => ghTripFilename(t)));
+  const remoteFn = new Set((_lastSyncListing || []).filter(f => f.name.endsWith('.csv')).map(f => f.name));
+  saveBtn.disabled = ![..._ghStatusChecked].some(k => localFn.has(k));
+  loadBtn.disabled = ![..._ghStatusChecked].some(k => remoteFn.has(k));
+  saveBtn.title = saveBtn.disabled ? 'Check at least one local trip above first' : 'Save the checked trips to GitHub';
+
+  // The Load button's own label states the stakes BEFORE pressing: how many local
+  // trips a load would overwrite (and whether unsaved edits are among them), plus
+  // the hold gesture it will require.
+  const label = document.getElementById('gh-load-label');
+  const plan = loadBtn.disabled ? null : computeGhLoadPlan();
+  if (!plan || !plan.replacing.length) {
+    label.textContent = '⬇ Load from GitHub';
+    loadBtn.title = loadBtn.disabled ? 'Check at least one trip that exists on GitHub first' : 'Load the checked trips from GitHub';
+  } else {
+    const n = plan.replacing.length;
+    label.textContent = `⬇ Hold — ${n} trip${n === 1 ? '' : 's'} overwritten by GitHub${plan.losing.length ? ' ⚠' : ''}`;
+    loadBtn.title = plan.losing.length
+      ? `Press and hold to load. ${plan.losing.length} trip(s) have UNSAVED LOCAL EDITS that will be replaced (a backup is uploaded to data/history/ first).`
+      : 'Press and hold until the bar fills to replace the local copies with GitHub’s version.';
+  }
 }
 
 function _syncAttentionSummary() {
@@ -4855,9 +4986,12 @@ function openGHModal() {
   document.getElementById('gh-repo').value         = cfg.repo   || 'aponsin/roadtrip-planner';
   document.getElementById('gh-device-label').value = cfg.device || ghDeviceId();
   document.getElementById('gh-log').innerHTML = '';
-  cancelGhPicker();   // reset any picker left open from a previous visit
-  cancelGhLoad();     // reset any override warning left open from a previous visit
+  _ghStatusChecked.clear(); // fresh selection each visit — buttons gray until something is checked
   document.getElementById('gh-modal').classList.add('open');
+  // Show trip status immediately: last known verdicts first (or "checking…"),
+  // then refresh from GitHub right away.
+  renderGhStatusList();
+  checkSyncStatus(true);
 }
 function closeGHModal() {
   document.getElementById('gh-modal').classList.remove('open');
@@ -4934,46 +5068,6 @@ function ghLog(msg, type = 'info') {
   log.scrollTop = log.scrollHeight;
 }
 
-// ── Trip picker (shared by Save and Load so only selected trips are touched) ──
-let ghPicker = null; // { items: [{key,label,badge,badgeClass,checked}], onConfirm(keys) }
-
-function showGhPicker(title, confirmLabel, items, onConfirm) {
-  ghPicker = { items, onConfirm };
-  document.getElementById('gh-picker-title').textContent = title;
-  document.getElementById('gh-picker-confirm').textContent = confirmLabel;
-  document.getElementById('gh-picker-toggle').textContent = 'Deselect all';
-  document.getElementById('gh-picker-list').innerHTML = items.map((it, i) => `
-    <label class="gh-picker-item">
-      <input type="checkbox" data-gh-pick="${i}" ${it.checked ? 'checked' : ''}>
-      <span class="gh-picker-name">${esc(it.label)}</span>
-      ${it.badge ? `<span class="gh-picker-badge ${it.badgeClass}">${it.badge}</span>` : ''}
-    </label>`).join('');
-  document.getElementById('gh-picker').style.display = '';
-  document.getElementById('gh-actions').style.display = 'none';
-}
-function cancelGhPicker() {
-  ghPicker = null;
-  document.getElementById('gh-picker').style.display = 'none';
-  document.getElementById('gh-actions').style.display = '';
-}
-function toggleGhPickerAll() {
-  const boxes = [...document.querySelectorAll('#gh-picker-list input[data-gh-pick]')];
-  const anyChecked = boxes.some(b => b.checked);
-  boxes.forEach(b => { b.checked = !anyChecked; });
-  document.getElementById('gh-picker-toggle').textContent = anyChecked ? 'Select all' : 'Deselect all';
-}
-function confirmGhPicker() {
-  if (!ghPicker) return;
-  const chosen = [];
-  document.querySelectorAll('#gh-picker-list input[data-gh-pick]').forEach(cb => {
-    if (cb.checked) chosen.push(ghPicker.items[parseInt(cb.dataset.ghPick)].key);
-  });
-  if (!chosen.length) { ghLog('⚠ Select at least one trip first.', 'warn'); return; }
-  const fn = ghPicker.onConfirm;
-  cancelGhPicker();
-  fn(chosen);
-}
-
 async function ghSave() {
   const token       = document.getElementById('gh-token').value.trim();
   const repoStr     = document.getElementById('gh-repo').value.trim();
@@ -4983,36 +5077,19 @@ async function ghSave() {
   const [owner, repo] = repoStr.split('/');
   ghSaveConfig({ token, repo: repoStr, device: deviceLabel });
 
-  const eligible = trips.filter(t => events.some(e => e.tripId === t.id));
-  if (!eligible.length) { ghLog('⚠ No trips with events to save.', 'warn'); return; }
+  // Acts directly on the trips checked in the status list above.
+  const tripsToSave = trips.filter(t => events.some(e => e.tripId === t.id) && _ghStatusChecked.has(ghTripFilename(t)));
+  if (!tripsToSave.length) { ghLog('⚠ Check at least one local trip in the list above.', 'warn'); return; }
 
-  // Fetch the remote listing so each trip shows its sync verdict. Trips whose save
-  // would overwrite someone else's newer version start UNCHECKED — saving them must
-  // be a deliberate choice. If the listing fails (offline), degrade to no badges.
-  ghLog('Checking sync state…');
-  let verdicts = new Map();
-  try {
-    const listing = await ghApi('GET', 'data', null, token, owner, repo);
-    if (Array.isArray(listing)) verdicts = classifyTripsAgainstListing(listing);
-  } catch (_) { /* offline or first save — badges just won't show */ }
+  // Saving over a NEWER version from another device must be a conscious choice.
+  const risky = tripsToSave.filter(t => ['remote-ahead', 'diverged'].includes(_lastSyncVerdicts.get(t.id)));
+  if (risky.length) {
+    const names = risky.map(t => `“${t.name}”`).join(', ');
+    if (!confirm(`${names} ${risky.length === 1 ? 'has' : 'have'} newer data on GitHub (saved from another device). Saving now overwrites it — the overwritten version is archived to data/history/. Continue?`)) return;
+  }
 
   document.getElementById('gh-log').innerHTML = '';
-  showGhPicker(
-    'Which trips should be saved to GitHub?',
-    '⬆ Save selected',
-    eligible.map(t => {
-      const v = verdicts.get(t.id);
-      const meta = v ? SYNC_VERDICT_META[v] : null;
-      const risky = v === 'remote-ahead' || v === 'diverged';
-      return {
-        key: t.id, label: t.name,
-        checked: v !== 'in-sync' && !risky, // in-sync: nothing to do; risky: opt-in only
-        badge: meta ? (risky ? meta.label + ' — save overwrites it' : meta.label) : null,
-        badgeClass: meta ? meta.cls : null,
-      };
-    }),
-    ids => executeGhSave(ids, token, owner, repo, repoStr, deviceLabel)
-  );
+  executeGhSave(tripsToSave.map(t => t.id), token, owner, repo, repoStr, deviceLabel);
 }
 
 async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) {
@@ -5073,165 +5150,98 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
   checkSyncStatus(true); // refresh the banner/badge with the new state
 }
 
-// ── GH LOAD WARNING / SLIDER ───────────────────────────────────────────────────
-let ghSlideState = null;
-let ghPendingLoad = null;
+// ── HOLD-TO-LOAD ────────────────────────────────────────────────────────────────
+// Loading trips that replace local copies is confirmed by PRESSING AND HOLDING the
+// Load button: a progress fill sweeps across it for 1.5s and the load fires only
+// when it completes (releasing early cancels). Harmless loads — only new/identical
+// trips selected — fire on a plain click, no hold needed. The button's own label
+// says what's at stake before you press (e.g. "hold — 2 trips overwritten").
+const GH_HOLD_MS = 1500;
+let _ghLoadPlan = null;   // { names, replacing:[], losing:[] } — recomputed on selection change
+let _ghHoldTimer = null;
+let _ghHoldFired = false;
 
-function showGhLoadWarning(token, owner, repo, selectedNames, replaceCount, losingNames = []) {
-  ghPendingLoad = { token, owner, repo, selectedNames };
-  let msg = `${replaceCount} of the selected trip${replaceCount !== 1 ? 's' : ''} will replace a trip you have locally (matched by name).`;
-  if (losingNames.length) {
-    const names = losingNames.map(n => `“${n.replace(/\.csv$/, '').replace(/_/g, ' ')}”`).join(', ');
-    msg += ` ⚠ ${names} ${losingNames.length === 1 ? 'has' : 'have'} UNSAVED LOCAL EDITS that this load will discard — a backup of the local version is uploaded to data/history/ first, but the calendar will show GitHub's version.`;
-  }
-  document.getElementById('gh-warn-text').textContent = msg;
-  document.getElementById('gh-load-warn').style.display = '';
-  document.getElementById('gh-actions').style.display   = 'none';
-  document.getElementById('gh-log').innerHTML = '';
-  resetGhSlider();
-}
-
-function cancelGhLoad() {
-  ghPendingLoad = null;
-  document.getElementById('gh-load-warn').style.display = 'none';
-  document.getElementById('gh-actions').style.display   = '';
-}
-
-function resetGhSlider() {
-  const thumb = document.getElementById('gh-slide-thumb');
-  const fill  = document.getElementById('gh-slide-fill');
-  const label = document.getElementById('gh-slide-label');
-  if (!thumb) return;
-  thumb.style.transition = '';
-  thumb.style.left = '5px';
-  thumb.classList.remove('done');
-  thumb.textContent = '⬇';
-  if (fill)  { fill.style.transition = ''; fill.style.width = '54px'; }
-  if (label) label.textContent = 'Slide to confirm →';
-}
-
-function initGhSlider() {
-  const track = document.getElementById('gh-slide-track');
-  const thumb = document.getElementById('gh-slide-thumb');
-  if (!track || !thumb) return;
-
-  const start = clientX => {
-    const rect = track.getBoundingClientRect();
-    ghSlideState = { startX: clientX, trackW: rect.width, thumbStart: parseInt(thumb.style.left || '5') };
-  };
-  const move = clientX => {
-    if (!ghSlideState) return;
-    const fill  = document.getElementById('gh-slide-fill');
-    const label = document.getElementById('gh-slide-label');
-    const maxL  = ghSlideState.trackW - 49;
-    const newL  = Math.max(5, Math.min(maxL, ghSlideState.thumbStart + clientX - ghSlideState.startX));
-    thumb.style.left = newL + 'px';
-    if (fill)  fill.style.width = (newL + 44) + 'px';
-    if (label) label.style.opacity = Math.max(0, 1 - newL / (maxL * 0.6));
-  };
-  const end = () => {
-    if (!ghSlideState) return;
-    const maxL = ghSlideState.trackW - 49;
-    const curL = parseInt(thumb.style.left || '5');
-    ghSlideState = null;
-    if (curL >= maxL - 4) {
-      // Confirmed — snap to end, turn green, then fire
-      thumb.style.left = maxL + 'px';
-      thumb.classList.add('done');
-      thumb.textContent = '✓';
-      const label = document.getElementById('gh-slide-label');
-      if (label) { label.textContent = 'Loading…'; label.style.opacity = 1; }
-      setTimeout(() => {
-        const pending = ghPendingLoad;
-        cancelGhLoad();
-        if (pending) executeGhLoad(pending.token, pending.owner, pending.repo, pending.selectedNames);
-      }, 350);
-    } else {
-      // Snap back with spring animation
-      thumb.style.transition = 'left .22s cubic-bezier(.4,0,.2,1)';
-      thumb.style.left = '5px';
-      const fill = document.getElementById('gh-slide-fill');
-      if (fill) { fill.style.transition = 'width .22s cubic-bezier(.4,0,.2,1)'; fill.style.width = '54px'; }
-      const label = document.getElementById('gh-slide-label');
-      if (label) { label.style.transition = 'opacity .22s'; label.style.opacity = 1; }
-      setTimeout(() => {
-        thumb.style.transition = '';
-        if (fill)  fill.style.transition  = '';
-        if (label) label.style.transition = '';
-      }, 230);
+// Recompute what a Load would do right now (used for the label AND the gesture).
+function computeGhLoadPlan() {
+  const files = (_lastSyncListing || []).filter(f => f.name.endsWith('.csv'));
+  const names = files.map(f => f.name).filter(n => _ghStatusChecked.has(n));
+  const tripByFilename = new Map(trips.filter(t => events.some(e => e.tripId === t.id)).map(t => [ghTripFilename(t), t]));
+  const replacing = [], losing = [];
+  for (const f of files) {
+    if (!names.includes(f.name)) continue;
+    const local = tripByFilename.get(f.name);
+    if (!local && !trips.some(t => ghTripFilename(t) === f.name)) continue; // brand new — harmless
+    replacing.push(f.name);
+    if (local) {
+      const v = syncVerdict(syncState[f.name] || null, strHash(ghBuildCSV(local.id) || ''), f.sha);
+      if (v === 'local-ahead' || v === 'diverged') losing.push(f.name);
     }
-  };
-
-  thumb.addEventListener('mousedown',  e => { e.preventDefault(); start(e.clientX); });
-  document.addEventListener('mousemove', e => { if (ghSlideState) move(e.clientX); });
-  document.addEventListener('mouseup',   () => { if (ghSlideState) end(); });
-  thumb.addEventListener('touchstart',  e => { e.preventDefault(); start(e.touches[0].clientX); }, { passive: false });
-  document.addEventListener('touchmove', e => { if (ghSlideState) { e.preventDefault(); move(e.touches[0].clientX); } }, { passive: false });
-  document.addEventListener('touchend',  () => { if (ghSlideState) end(); });
+  }
+  _ghLoadPlan = { names, replacing, losing };
+  return _ghLoadPlan;
 }
 
-async function ghLoad() {
+function ghLoadValidate() {
   const token   = document.getElementById('gh-token').value.trim();
   const repoStr = document.getElementById('gh-repo').value.trim();
-  if (!token)               { ghLog('⚠ Please enter a GitHub token.', 'warn'); return; }
-  if (!repoStr.includes('/')) { ghLog('⚠ Repo must be "owner/repo".', 'warn'); return; }
+  if (!token)               { ghLog('⚠ Please enter a GitHub token.', 'warn'); return null; }
+  if (!repoStr.includes('/')) { ghLog('⚠ Repo must be "owner/repo".', 'warn'); return null; }
   const [owner, repo] = repoStr.split('/');
   ghSaveConfig({ token, repo: repoStr });
+  return { token, owner, repo };
+}
 
-  // List what's on GitHub first so the user can pick exactly which trips to load —
-  // and see up front which of them would replace a local trip vs arrive as new.
-  ghLog(`Looking for trips in ${repoStr}/data/ …`);
-  let listing;
-  try {
-    listing = await ghApi('GET', 'data', null, token, owner, repo);
-  } catch(err) {
-    ghLog(`✗ Error listing /data/: ${err.message}`, 'error'); return;
-  }
-  if (!listing || !Array.isArray(listing)) {
-    ghLog('No /data/ folder found. Save to GitHub first to create it.', 'warn'); return;
-  }
-  const files = listing.filter(f => f.name.endsWith('.csv'));
-  if (!files.length) { ghLog('No .csv files found in /data/.', 'warn'); return; }
-
+function performGhLoad() {
+  const cfg = ghLoadValidate();
+  if (!cfg || !_ghLoadPlan || !_ghLoadPlan.names.length) return;
   document.getElementById('gh-log').innerHTML = '';
-  // Verdict per remote file (from the local trip with the matching filename):
-  // drives the badge, the default checkbox, and how scary the confirm gate is.
-  const tripByFilename = new Map(trips.filter(t => events.some(e => e.tripId === t.id)).map(t => [ghTripFilename(t), t]));
-  const verdictByName = new Map();
-  for (const f of files) {
-    const local = tripByFilename.get(f.name);
-    verdictByName.set(f.name, local
-      ? syncVerdict(syncState[f.name] || null, strHash(ghBuildCSV(local.id) || ''), f.sha)
-      : (trips.some(t => ghTripFilename(t) === f.name) ? 'never-synced' : 'new'));
+  executeGhLoad(cfg.token, cfg.owner, cfg.repo, _ghLoadPlan.names);
+}
+
+function _ghResetHoldFill(fill) {
+  fill.style.transition = 'none';
+  fill.style.width = '0%';
+}
+
+function ghLoadPress(e) {
+  const btn = document.getElementById('gh-load-btn');
+  if (btn.disabled) return;
+  const plan = computeGhLoadPlan();
+  if (!plan.names.length) return;
+  _ghHoldFired = false;
+  if (!plan.replacing.length) return; // harmless load — plain click (pointerup→click) handles it
+  e.preventDefault();
+  btn.setPointerCapture?.(e.pointerId);
+  const fill = document.getElementById('gh-load-fill');
+  _ghResetHoldFill(fill);
+  // Force a reflow so the width transition starts from 0 every time
+  void fill.offsetWidth;
+  fill.style.transition = `width ${GH_HOLD_MS}ms linear`;
+  fill.style.width = '100%';
+  _ghHoldTimer = setTimeout(() => {
+    _ghHoldTimer = null;
+    _ghHoldFired = true;
+    _ghResetHoldFill(fill);
+    performGhLoad();
+  }, GH_HOLD_MS);
+}
+
+function ghLoadRelease() {
+  if (_ghHoldTimer) {
+    clearTimeout(_ghHoldTimer);
+    _ghHoldTimer = null;
+    _ghResetHoldFill(document.getElementById('gh-load-fill'));
   }
-  const items = files.map(f => {
-    const v = verdictByName.get(f.name);
-    const meta = SYNC_VERDICT_META[v] || SYNC_VERDICT_META['never-synced'];
-    const losesLocal = v === 'local-ahead' || v === 'diverged';
-    return {
-      key: f.name,
-      label: f.name.replace(/\.csv$/, '').replace(/_/g, ' '),
-      // Sensible defaults: pull what's newer/new; never pre-check a load that would
-      // discard local edits, or one that changes nothing.
-      checked: v === 'remote-ahead' || v === 'new' || v === 'never-synced',
-      badge: losesLocal ? meta.label + ' — load discards them' : meta.label,
-      badgeClass: meta.cls,
-    };
-  });
-  showGhPicker(
-    'Which trips should be loaded from GitHub?',
-    '⬇ Load selected',
-    items,
-    names => {
-      const losing = names.filter(n => ['local-ahead', 'diverged'].includes(verdictByName.get(n)));
-      const replacing = names.filter(n => trips.some(t => ghTripFilename(t) === n));
-      // Gate only loads that actually touch something local; extra-red when local
-      // edits would be discarded (they're backed up to history first, see
-      // executeGhLoad, but the user should still decide deliberately).
-      if (replacing.length > 0) showGhLoadWarning(token, owner, repo, names, replacing.length, losing);
-      else executeGhLoad(token, owner, repo, names);
-    }
-  );
+}
+
+function ghLoadClickHint() {
+  const btn = document.getElementById('gh-load-btn');
+  if (btn.disabled || _ghHoldFired) { _ghHoldFired = false; return; }
+  const plan = _ghLoadPlan || computeGhLoadPlan();
+  if (!plan.names.length) return;
+  if (!plan.replacing.length) { performGhLoad(); return; } // harmless — plain click loads
+  // Held-but-released-early (or keyboard activation) lands here — explain the gesture
+  ghLog(`⚠ Press and HOLD the Load button until the bar fills — ${plan.replacing.length} local trip${plan.replacing.length === 1 ? '' : 's'} will be overwritten.`, 'warn');
 }
 
 async function executeGhLoad(token, owner, repo, selectedNames = null) {
@@ -5742,7 +5752,7 @@ function renderCal() {
       const linkCls = (ev.linkedNextId ? ' link-src' : '') + (linkDstIds.has(ev.id) ? ' link-dst' : '');
 
       bars += `<div class="ev-bar${drag}${linkCls}" data-id="${ev.id}"
-        style="left:calc(${left.toFixed(3)}% + 2px);width:calc(${width.toFixed(3)}% - 4px);top:${top}px;height:${LANE_H}px;background:${cat.bg};border:1.5px ${ev.tripId == null ? 'dashed' : 'solid'} ${cat.border};color:${cat.color};border-radius:${tl} ${tr} ${tr} ${tl}"
+        style="left:${left.toFixed(4)}%;width:${width.toFixed(4)}%;top:${top}px;height:${LANE_H}px;background:${cat.bg};border:1.5px ${ev.tripId == null ? 'dashed' : 'solid'} ${cat.border};color:${cat.color};border-radius:${tl} ${tr} ${tr} ${tl}"
         onmousedown="barDown(event,${ev.id})" ontouchend="barTap(event,${ev.id})"
         ondblclick="closePop();openForm(events.find(e=>e.id===${ev.id}))"
         onmouseenter="showBarHover(event,${ev.id})"
@@ -6089,6 +6099,9 @@ function closeForm() {
   overlay.classList.add('closed');
   editingId = null;
   routeData = null;
+  // A newer state written by another tab while the form was open is applied now —
+  // deferred so it couldn't yank the form out from under the user mid-edit.
+  if (_externalStatePending) setTimeout(adoptExternalStateIfChanged, 0);
 }
 
 function onOverlayClick(e) {
