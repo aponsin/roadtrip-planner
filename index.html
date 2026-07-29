@@ -419,6 +419,7 @@ body {
    modal/sheet is open (event form, trip summary, photo import, sync, share,
    lightbox). :has() is supported on all target browsers; on anything older this
    degrades to the previous behavior. */
+body:has(#pop.open) .undo-area,
 body:has(#form-overlay:not(.closed)) .undo-area,
 body:has(#trip-viz-overlay.open) .undo-area,
 body:has(#import-overlay.open) .undo-area,
@@ -6905,6 +6906,7 @@ function showPop(e, ev) {
 
   const pop = document.getElementById('pop');
   pop.style.display = 'block';
+  pop.classList.add('open');
   updatePopNav();
 
   // Position: avoid clipping at viewport edges
@@ -6931,7 +6933,9 @@ function showPop(e, ev) {
 }
 
 function closePop() {
-  document.getElementById('pop').style.display = 'none';
+  const pop = document.getElementById('pop');
+  pop.style.display = 'none';
+  pop.classList.remove('open');
   popEvId = null;
 }
 
@@ -7122,6 +7126,12 @@ function onKeyDown(e) {
     if (e.key === 'Escape')      { document.getElementById('photo-lightbox').classList.remove('open'); _lightboxEvId = null; return; }
     if (e.key === 'ArrowLeft')   { lightboxNav(-1); return; }
     if (e.key === 'ArrowRight')  { lightboxNav(1);  return; }
+  }
+  // Event preview popover: ←/→ step through the trip's events (same as the ‹ › buttons)
+  if (popEvId != null && document.getElementById('pop').style.display !== 'none'
+      && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) {
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); popNavStep(-1); return; }
+    if (e.key === 'ArrowRight') { e.preventDefault(); popNavStep(1);  return; }
   }
   if (e.key === 'Escape') { closePop(); closeForm(); closeCtxMenu(); document.getElementById('trip-viz-overlay').classList.remove('open'); closeGHModal(); }
   const mod = e.metaKey || e.ctrlKey;
