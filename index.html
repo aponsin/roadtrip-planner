@@ -156,7 +156,10 @@ body {
 .gh-btn.load { background: #fff; color: #0f172a; }
 .gh-btn.load:hover { background: #f1f5f9; }
 .gh-btn:disabled { opacity: .4; cursor: not-allowed; }
-.gh-btn:disabled:hover { background: inherit; }
+/* Disabled buttons must not react to hover — keep each variant's own background
+   ('inherit' here once blanked the dark Save button against the white modal) */
+.gh-btn.save:disabled:hover { background: #0f172a; }
+.gh-btn.load:disabled:hover { background: #fff; }
 .gh-log {
   max-height: 160px; overflow-y: auto;
   background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 7px;
@@ -370,7 +373,7 @@ body {
   position: absolute; inset: 0; width: 0%; background: rgba(217, 119, 6, .35);
   pointer-events: none;
 }
-.gh-btn-label { position: relative; pointer-events: none; }
+.gh-btn-label { position: relative; pointer-events: none; white-space: nowrap; }
 /* ── DAY CONTEXT MENU ───────────────────── */
 #day-ctx-menu {
   background: #fff;
@@ -4810,17 +4813,16 @@ function updateGhActionButtons() {
   loadBtn.disabled = ![..._ghStatusChecked].some(k => remoteFn.has(k));
   saveBtn.title = saveBtn.disabled ? 'Check at least one local trip above first' : 'Save the checked trips to GitHub';
 
-  // The Load button's own label states the stakes BEFORE pressing: how many local
-  // trips a load would overwrite (and whether unsaved edits are among them), plus
-  // the hold gesture it will require.
+  // Load button label: announces the GESTURE up front ("Hold to load…" whenever the
+  // selection would overwrite local trips); the concrete stakes ("Overwriting X
+  // trips") appear on the button only WHILE the hold is in progress (ghLoadPress).
   const label = document.getElementById('gh-load-label');
   const plan = loadBtn.disabled ? null : computeGhLoadPlan();
   if (!plan || !plan.replacing.length) {
     label.textContent = '⬇ Load from GitHub';
     loadBtn.title = loadBtn.disabled ? 'Check at least one trip that exists on GitHub first' : 'Load the checked trips from GitHub';
   } else {
-    const n = plan.replacing.length;
-    label.textContent = `⬇ Hold — ${n} trip${n === 1 ? '' : 's'} overwritten by GitHub${plan.losing.length ? ' ⚠' : ''}`;
+    label.textContent = '⬇ Hold to load from GitHub';
     loadBtn.title = plan.losing.length
       ? `Press and hold to load. ${plan.losing.length} trip(s) have UNSAVED LOCAL EDITS that will be replaced (a backup is uploaded to data/history/ first).`
       : 'Press and hold until the bar fills to replace the local copies with GitHub’s version.';
@@ -5213,6 +5215,10 @@ function ghLoadPress(e) {
   if (!plan.replacing.length) return; // harmless load — plain click (pointerup→click) handles it
   e.preventDefault();
   btn.setPointerCapture?.(e.pointerId);
+  // While the hold is active, the label states the concrete stakes
+  const n = plan.replacing.length;
+  document.getElementById('gh-load-label').textContent =
+    `⬇ Overwriting ${n} trip${n === 1 ? '' : 's'}${plan.losing.length ? ' ⚠' : ''}`;
   const fill = document.getElementById('gh-load-fill');
   _ghResetHoldFill(fill);
   // Force a reflow so the width transition starts from 0 every time
@@ -5232,6 +5238,7 @@ function ghLoadRelease() {
     clearTimeout(_ghHoldTimer);
     _ghHoldTimer = null;
     _ghResetHoldFill(document.getElementById('gh-load-fill'));
+    updateGhActionButtons(); // released early — restore the "Hold to load" label
   }
 }
 
