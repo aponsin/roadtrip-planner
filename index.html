@@ -2053,6 +2053,16 @@ function init() {
 
   renderFormDebug(); // reflect persisted debug-mode state on the sidebar 🐞 toggle
 
+  // Flush deferred import-panel renders once the user leaves/uses a dropdown
+  // (see renderImportModal's open-select guard). setTimeout lets focus settle
+  // first so the guard doesn't immediately re-defer.
+  const importBody = document.getElementById('import-body');
+  if (importBody) {
+    const flush = () => { if (_importRenderDeferred) setTimeout(() => renderImportModal(), 0); };
+    importBody.addEventListener('change', flush);
+    importBody.addEventListener('focusout', flush);
+  }
+
   // SAME-DEVICE convergence: two tabs (or an iOS-frozen page revived hours later)
   // share localStorage but keep separate in-memory copies. A stale tab's next save()
   // used to clobber everything a fresher tab had written — events/photos "vanishing"
@@ -4608,9 +4618,21 @@ function safeRenderReviewItem(p, tripEvs) {
   }
 }
 
+let _importRenderDeferred = false;
 function renderImportModal() {
   const body = document.getElementById('import-body');
   if (!body || importActiveTripId == null) return;
+
+  // Never re-render while the user is inside a dropdown: rebuilding the DOM under
+  // an OPEN native select snaps it shut mid-choice (maddening while photos are
+  // still processing in the background). Defer instead — the change/focusout
+  // listeners in init() flush the pending render the moment they're done.
+  const ae = document.activeElement;
+  if (ae && ae.tagName === 'SELECT' && body.contains(ae)) {
+    _importRenderDeferred = true;
+    return;
+  }
+  _importRenderDeferred = false;
 
   // ── Pre-render snapshot ───────────────────────────────────────────────────
   // This function rebuilds the whole panel via innerHTML and runs several times per
