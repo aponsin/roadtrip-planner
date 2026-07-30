@@ -695,7 +695,7 @@ body:has(#photo-lightbox.open) .undo-area { display: none !important; }
   background: linear-gradient(135deg, #ecfdf5, #eff6ff);
   border: 1.5px solid #a7f3d0;
 }
-.tviz-earth-text { font-size: 12px; font-weight: 600; color: #065f46; margin-bottom: 9px; line-height: 1.5; }
+.tviz-earth-text { font-size: 12px; font-weight: 600; color: #065f46; margin-bottom: 9px; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tviz-earth-track {
   position: relative; height: 8px; border-radius: 5px; background: #d1fae5;
   margin-right: 20px; /* room for the globe at the finish line */
@@ -2408,23 +2408,50 @@ function csvCell(val) {
 
 // ── TRIP VISUALIZATION ─────────────────────────────────────────────────────────
 let tvizCurrentTripId = null;
-// ── Earth-lap comparison (Trip Summary fun fact) ──────────────────────────────
-// How far around the planet is this trip? Returns the fraction of Earth's
-// circumference plus a quip scaled to the achievement. Pure — unit-tested.
+// ── Distance-comparison ladder (Trip Summary fun fact) ────────────────────────
+// Picks the most MEANINGFUL yardstick for the trip's size, so a weekend trip gets
+// "64% of the way across Colorado" instead of a demoralizing "1.5% of the Earth".
+// Ladder: crossing Colorado 🏔 → USA coast-to-coast 🇺🇸 → around the Earth 🌍 →
+// (for planet-lappers) progress toward the Moon 🌕. The returned fraction drives
+// the progress bar toward the current tier's goal emoji. Pure — unit-tested.
 const EARTH_CIRCUMFERENCE_KM = 40075;
+const CO_CROSS_KM   = 610;    // border to border across Colorado, ~380 mi
+const USA_COAST_KM  = 4500;   // LA → NYC, ~2,800 mi
+const MOON_DISTANCE_KM = 384400;
 function earthComparison(distM) {
   const km = distM / 1000;
-  const f = km / EARTH_CIRCUMFERENCE_KM;
-  const pct = f >= 0.095 ? Math.round(f * 100) : +(f * 100).toFixed(1);
-  let text;
-  if (f >= 2)         text = `You've lapped the planet ${Math.floor(f)} times over — Phileas Fogg is taking notes. 🎩`;
-  else if (f >= 1)    text = `A FULL LAP around the Earth — and then some (${pct}%)! 🏆`;
-  else if (f >= 0.5)  text = `More than HALFWAY around the planet (${pct}% of the equator)!`;
-  else if (f >= 0.25) text = `A quarter of the way around the Earth (${pct}%) — the equator is getting nervous.`;
-  else if (f >= 0.1)  text = `${pct}% of the way around the Earth — properly epic road-tripping.`;
-  else if (f >= 0.02) text = `${pct}% of Earth's circumference — the planet barely felt it… yet.`;
-  else                text = `${pct}% of the way around the Earth — every great lap starts somewhere!`;
-  return { fraction: f, pct, text };
+  const pctOf = ref => { const f = km / ref; return f >= 0.095 ? Math.round(f * 100) : +(f * 100).toFixed(1); };
+
+  if (km < CO_CROSS_KM) {
+    const pct = pctOf(CO_CROSS_KM);
+    const text = km < 61
+      ? `${pct}% of the way across Colorado — a scenic warm-up!`
+      : `${pct}% of the way across Colorado — the Rockies are watching.`;
+    return { fraction: km / CO_CROSS_KM, pct, text, goal: '🏔' };
+  }
+  if (km < USA_COAST_KM) {
+    const pct = pctOf(USA_COAST_KM);
+    const co = (km / CO_CROSS_KM).toFixed(1);
+    return { fraction: km / USA_COAST_KM, pct, goal: '🇺🇸',
+      text: `${co}× across Colorado — ${pct}% of a USA coast-to-coast drive!` };
+  }
+  if (km < EARTH_CIRCUMFERENCE_KM) {
+    const f = km / EARTH_CIRCUMFERENCE_KM;
+    const pct = pctOf(EARTH_CIRCUMFERENCE_KM);
+    const usa = (km / USA_COAST_KM).toFixed(1);
+    const clause = f >= 0.5 ? 'more than HALFWAY around the planet!'
+                 : f >= 0.25 ? 'the equator is getting nervous.'
+                 : 'the planet has noticed.';
+    return { fraction: f, pct, goal: '🌍',
+      text: `${usa}× coast-to-coast — ${pct}% around the Earth: ${clause}` };
+  }
+  const laps = km / EARTH_CIRCUMFERENCE_KM;
+  const moonPct = +(km / MOON_DISTANCE_KM * 100).toFixed(1);
+  const lapTxt = laps >= 2
+    ? `${Math.floor(laps)} Earth laps — Phileas Fogg is taking notes. 🎩`
+    : `A FULL LAP around the Earth! 🏆`;
+  return { fraction: km / MOON_DISTANCE_KM, pct: moonPct, goal: '🌕',
+    text: `${lapTxt} …and ${moonPct}% of the way to the Moon.` };
 }
 
 function openTripViz(tripId) {
@@ -2515,11 +2542,11 @@ function openTripViz(tripId) {
     const cmp = earthComparison(totalDistM);
     const carPos = Math.min(cmp.fraction, 1) * 100;
     bodyHtml += `<div class="tviz-earth">
-      <div class="tviz-earth-text">🌍 ${esc(cmp.text)}</div>
+      <div class="tviz-earth-text">${cmp.goal} ${esc(cmp.text)}</div>
       <div class="tviz-earth-track">
         <div class="tviz-earth-fill" style="width:${carPos.toFixed(2)}%"></div>
         <span class="tviz-earth-car" style="left:${carPos.toFixed(2)}%">🚗</span>
-        <span class="tviz-earth-goal">🌍</span>
+        <span class="tviz-earth-goal">${cmp.goal}</span>
       </div>
     </div>`;
   }
@@ -2775,6 +2802,17 @@ async function initTripOverviewMap(tripId) {
   container.appendChild(refreshBtn);
 
   const bounds = [];
+  // Data-gap indicator: when one leg's arrival isn't the next leg's departure (a
+  // stretch that was never logged as its own driving event), a dotted gray line
+  // marks the gap — deliberately distinct from real routes, so missing legs are
+  // easy to spot and fix in the data.
+  for (let i = 1; i < drawn.length; i++) {
+    const prev = drawn[i - 1], cur = drawn[i];
+    if (distanceMiles(prev.arr.lat, prev.arr.lon, cur.dep.lat, cur.dep.lon) > 1) {
+      L.polyline([[prev.arr.lat, prev.arr.lon], [cur.dep.lat, cur.dep.lon]],
+        { color: '#94a3b8', weight: 2.5, dashArray: '4 7', opacity: .8 }).addTo(map);
+    }
+  }
   for (const d of drawn) {
     if (d.geom && d.geom.coordinates && d.geom.coordinates.length > 1) {
       const latlngs = d.geom.coordinates.map(c => [c[1], c[0]]);
@@ -2858,9 +2896,15 @@ function tvizApplySearch() {
     }
     day.style.display = visibleCards ? '' : 'none';
   }
-  // The full-route maps button only makes sense for the unfiltered view
-  const mapBtn = body.querySelector('.tviz-map-btn');
-  if (mapBtn) mapBtn.style.display = filtering ? 'none' : '';
+  // Trip-wide furniture (overview map, distance widget, maps button) only makes
+  // sense for the unfiltered view — hide it all while searching/filtering so the
+  // matching events are front and center.
+  for (const sel of ['.tviz-map-btn', '.tviz-earth', '#leg-map-overview', '.tviz-overview-note']) {
+    const el = body.querySelector(sel);
+    if (el) el.style.display = filtering ? 'none' : '';
+  }
+  // Leaflet needs a size recheck after the map returns from display:none
+  if (!filtering && tvizMaps['overview']) { try { tvizMaps['overview'].invalidateSize(); } catch (_) {} }
 
   const filterNote = pf === 'with' ? ' · only events with photos' : pf === 'without' ? ' · only events without photos' : '';
   countEl.textContent = !filtering ? ''
