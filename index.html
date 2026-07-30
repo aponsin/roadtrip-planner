@@ -2739,12 +2739,20 @@ async function initTripOverviewMap(tripId) {
   // Every leg's outcome is recorded for the debug diagnostics panel.
   const validGeo = g => g && Number.isFinite(g.lat) && Number.isFinite(g.lon);
   const drawn = [], diag = [];
+  const loadingEl = () => container.querySelector('.tviz-leg-map-loading');
+  let legNo = 0;
   for (const leg of legs) {
-    let usedApi = false;
+    legNo++;
+    // Live progress — a cold cache (e.g. right after ↺) re-geocodes everything at
+    // Nominatim's 1 req/s limit, which takes a couple of minutes for a big trip.
+    // Without this counter it just looked hung.
+    const le = loadingEl();
+    if (le) le.textContent = `Loading trip map… leg ${legNo}/${legs.length}`;
+    let usedGeocoder = false, usedRouter = false;
     for (const addr of [leg.departure, leg.arrival]) {
       if (!validGeo(_geoCache[addr])) {
         try { _geoCache[addr] = await geocode(addr); } catch (_) { _geoCache[addr] = null; }
-        _saveGeoCache(); usedApi = true;
+        _saveGeoCache(); usedGeocoder = true;
       }
     }
     const dep = _geoCache[leg.departure], arr = _geoCache[leg.arrival];
@@ -2752,18 +2760,20 @@ async function initTripOverviewMap(tripId) {
     diag.push(d);
     if (!d.dep || !d.arr) { d.status = 'unresolved'; continue; }
     const key = leg.departure + '|' + leg.arrival;
-    if (!(key in _routeCache)) { _routeCache[key] = await fetchLegRoute(dep, arr); _saveRouteCache(); usedApi = true; }
+    if (!(key in _routeCache)) { _routeCache[key] = await fetchLegRoute(dep, arr); _saveRouteCache(); usedRouter = true; }
     // Self-heal stale routes: cached geometry that no longer connects the current
     // geocodes (address edited, or geocode changed) gets refetched once.
     if (_routeCache[key] && !routeMatchesEndpoints(_routeCache[key], dep, arr)) {
       console.warn('[overview map] stale cached route — refetching:', leg.title);
       _routeCache[key] = await fetchLegRoute(dep, arr);
-      _saveRouteCache(); usedApi = true;
+      _saveRouteCache(); usedRouter = true;
       d.status = 'route refreshed';
     }
     d.geom = _routeCache[key];
     drawn.push(d);
-    if (usedApi) await new Promise(r => setTimeout(r, 1100)); // respect Nominatim/OSRM limits
+    // Nominatim enforces 1 req/s; OSRM is far more tolerant — don't over-throttle
+    if (usedGeocoder) await new Promise(r => setTimeout(r, 1100));
+    else if (usedRouter) await new Promise(r => setTimeout(r, 300));
   }
   if (!drawn.length) { container.innerHTML = '<div class="tviz-leg-map-loading">Trip map unavailable — could not locate the addresses</div>'; return; }
 
@@ -2786,22 +2796,32 @@ async function initTripOverviewMap(tripId) {
     console.warn('[overview map] skipped leg — geocode looks wrong:', s.leg.title,
       { departure: s.leg.departure, dep: s.dep, arrival: s.leg.arrival, arr: s.arr });
   }
-  const note = document.getElementById('tviz-overview-note');
-  if (note) {
+  const renderOverviewNote = () => {
+    const note = document.getElementById('tviz-overview-note');
+    if (!note) return;
     let msg = skipped.length
       ? `⚠ ${skipped.length} leg${skipped.length === 1 ? '' : 's'} left off the map — the address lookup returned an implausible location for: ${skipped.map(s => `“${s.leg.title}”`).join(', ')}. Try the map's ↺ to re-look-up all addresses.`
       : '';
     // Debug mode: full per-leg resolution table — the on-device view of exactly what
-    // every address resolved to (no dev console needed on a phone).
+    // every address resolved to, incl. geometry size and per-leg DRAW status.
     if (debugMode) {
       const fmtG = g => g ? `${g.lat.toFixed(3)},${g.lon.toFixed(3)}` : '✗ not found';
+      // Also print the cached geometry's REAL endpoints — a stale/wrong route is
+      // instantly visible when they don't match the geocodes on the same line.
+      const fmtRoute = geom => {
+        const cs = geom && geom.coordinates;
+        if (!cs || cs.length < 2) return geom ? '✓(degenerate!)' : '✗';
+        const [slon, slat] = cs[0], [elon, elat] = cs[cs.length - 1];
+        return `✓(${cs.length} pts, ${slat.toFixed(2)},${slon.toFixed(2)}→${elat.toFixed(2)},${elon.toFixed(2)})`;
+      };
       msg += (msg ? '\n' : '') + '🐞 Leg resolution:\n' + diag.map(d =>
-        `• ${d.leg.title}: “${d.leg.departure}” → ${fmtG(d.dep)} | “${d.leg.arrival}” → ${fmtG(d.arr)} | route ${d.geom ? '✓' : '✗'}${d.status ? ' | ' + d.status.toUpperCase() : ''}`
+        `• ${d.leg.title}: “${d.leg.departure}” → ${fmtG(d.dep)} | “${d.leg.arrival}” → ${fmtG(d.arr)} | route ${fmtRoute(d.geom)}${d.status ? ' | ' + d.status.toUpperCase() : ''}`
       ).join('\n');
       note.style.whiteSpace = 'pre-wrap';
     }
     note.textContent = msg;
-  }
+  };
+  renderOverviewNote();
   if (!kept.length) { container.innerHTML = '<div class="tviz-leg-map-loading">Trip map unavailable — the address lookups disagree wildly; try ↺ (and 🐞 debug mode shows per-leg details below)</div>'; return; }
   drawn.length = 0; drawn.push(...kept);
 
@@ -2832,18 +2852,27 @@ async function initTripOverviewMap(tripId) {
     }
   }
   for (const d of drawn) {
-    if (d.geom && d.geom.coordinates && d.geom.coordinates.length > 1) {
-      const latlngs = d.geom.coordinates.map(c => [c[1], c[0]]);
-      L.polyline(latlngs, { color: '#2563eb', weight: 4, opacity: .85 }).addTo(map);
-      bounds.push(...latlngs);
-    } else {
-      L.polyline([[d.dep.lat, d.dep.lon], [d.arr.lat, d.arr.lon]], { color: '#2563eb', weight: 3, dashArray: '6 6', opacity: .7 }).addTo(map);
-      bounds.push([d.dep.lat, d.dep.lon], [d.arr.lat, d.arr.lon]);
+    try {
+      if (d.geom && d.geom.coordinates && d.geom.coordinates.length > 1) {
+        const latlngs = d.geom.coordinates.map(c => [c[1], c[0]]);
+        L.polyline(latlngs, { color: '#2563eb', weight: 4, opacity: .85 }).addTo(map);
+        // Plain loop, NOT bounds.push(...latlngs): spreading a dense route (a long
+        // highway leg can be tens of thousands of points) can exceed the JS engine's
+        // argument limit and throw — killing this leg's render and everything after.
+        for (const ll of latlngs) bounds.push(ll);
+      } else {
+        L.polyline([[d.dep.lat, d.dep.lon], [d.arr.lat, d.arr.lon]], { color: '#2563eb', weight: 3, dashArray: '6 6', opacity: .7 }).addTo(map);
+        bounds.push([d.dep.lat, d.dep.lon], [d.arr.lat, d.arr.lon]);
+      }
+      // Stop markers with the place name as a popup
+      L.circleMarker([d.arr.lat, d.arr.lon], { radius: 5, color: '#1d4ed8', fillColor: '#3b82f6', fillOpacity: 1, weight: 2 })
+        .addTo(map).bindPopup(esc(d.leg.arrival));
+    } catch (e) {
+      d.status = (d.status ? d.status + '; ' : '') + 'DRAW FAILED: ' + e.message;
+      console.warn('[overview map] draw failed for leg:', d.leg.title, e);
     }
-    // Stop markers with the place name as a popup
-    L.circleMarker([d.arr.lat, d.arr.lon], { radius: 5, color: '#1d4ed8', fillColor: '#3b82f6', fillOpacity: 1, weight: 2 })
-      .addTo(map).bindPopup(esc(d.leg.arrival));
   }
+  renderOverviewNote(); // refresh with per-leg draw statuses
   const first = drawn[0], last = drawn[drawn.length - 1];
   L.circleMarker([first.dep.lat, first.dep.lon], { radius: 7, color: '#fff', fillColor: '#22c55e', fillOpacity: 1, weight: 2 })
     .addTo(map).bindTooltip('Start', { permanent: true, direction: 'top', className: 'tviz-map-label tviz-map-label-start' }).bindPopup(esc(first.leg.departure));
@@ -2866,7 +2895,7 @@ async function refreshOverviewMap(tripId) {
   _saveGeoCache(); _saveRouteCache();
   if (tvizMaps['overview']) { try { tvizMaps['overview'].remove(); } catch (_) {} delete tvizMaps['overview']; }
   const container = document.getElementById('leg-map-overview');
-  if (container) container.innerHTML = '<div class="tviz-leg-map-loading">Re-looking-up all addresses…</div>';
+  if (container) container.innerHTML = '<div class="tviz-leg-map-loading">Re-looking-up all addresses — this takes a couple of minutes for a big trip ☕</div>';
   try { await initTripOverviewMap(tripId); } catch (e) { console.warn('[overview refresh]', e); }
 }
 
