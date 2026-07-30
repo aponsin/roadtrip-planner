@@ -5628,13 +5628,13 @@ async function executeGhLoad(token, owner, repo, selectedNames = null) {
       if (!fileData?.content) { ghLog(`⚠ Empty: ${file.name}`, 'warn'); continue; }
 
       const csvText = ghDecode(fileData.content);
-      const lines = csvText.replace(/\r\n/g,'\n').replace(/\r/g,'\n').trim().split('\n');
-      if (lines.length < 2) continue;
+      const allRows = parseCSVRows(csvText); // quote-aware: multi-line descriptions survive
+      if (allRows.length < 2) continue;
 
-      const headers = parseCSVRow(lines[0]).map(h => h.trim());
+      const headers = allRows[0].map(h => h.trim());
       const idx = {};
       headers.forEach((h, i) => idx[h] = i);
-      const dataRows = lines.slice(1).filter(l => l.trim()).map(parseCSVRow);
+      const dataRows = allRows.slice(1);
       if (!dataRows.length) continue;
 
       const get = (row, key) => (idx[key] !== undefined ? (row[idx[key]] || '') : '');
@@ -5775,6 +5775,30 @@ function importTrip() {
   inp.click();
 }
 
+// Parse an ENTIRE CSV text into rows, honoring quoted fields that span commas,
+// escaped quotes, and — critically — NEWLINES. The old line-based loaders split the
+// file by newline first, which shredded any event whose description had line breaks:
+// its title/times survived (columns before description) but the description was
+// truncated and departure/arrival/photos (columns after) were silently lost on load.
+function parseCSVRows(text) {
+  const rows = []; let row = []; let cur = ''; let inQ = false;
+  const t = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (inQ) {
+      if (ch === '"' && t[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') inQ = false;
+      else cur += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ',') { row.push(cur); cur = ''; }
+    else if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+    else cur += ch;
+  }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  // Drop blank records (e.g. trailing newline)
+  return rows.filter(r => r.length > 1 || (r[0] && r[0].trim() !== ''));
+}
+
 function parseCSVRow(line) {
   const cells = []; let cur = '', inQ = false;
   for (let i = 0; i < line.length; i++) {
@@ -5794,10 +5818,10 @@ function parseCSVRow(line) {
 }
 
 function parseImportCSV(text) {
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim().split('\n');
-  if (lines.length < 2) { alert('Invalid CSV — file appears empty.'); return; }
+  const allRows = parseCSVRows(text); // quote-aware: multi-line descriptions survive
+  if (allRows.length < 2) { alert('Invalid CSV — file appears empty.'); return; }
 
-  const headers = parseCSVRow(lines[0]).map(h => h.trim());
+  const headers = allRows[0].map(h => h.trim());
   const idx = {};
   headers.forEach((h, i) => idx[h] = i);
 
@@ -5807,7 +5831,7 @@ function parseImportCSV(text) {
     return;
   }
 
-  const dataRows = lines.slice(1).filter(l => l.trim()).map(parseCSVRow);
+  const dataRows = allRows.slice(1);
   if (!dataRows.length) { alert('No event rows found in CSV.'); return; }
 
   const get = (row, key) => (idx[key] !== undefined ? (row[idx[key]] || '') : '');
