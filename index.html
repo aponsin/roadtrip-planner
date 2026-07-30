@@ -2743,6 +2743,14 @@ async function initTripOverviewMap(tripId) {
     if (!d.dep || !d.arr) { d.status = 'unresolved'; continue; }
     const key = leg.departure + '|' + leg.arrival;
     if (!(key in _routeCache)) { _routeCache[key] = await fetchLegRoute(dep, arr); _saveRouteCache(); usedApi = true; }
+    // Self-heal stale routes: cached geometry that no longer connects the current
+    // geocodes (address edited, or geocode changed) gets refetched once.
+    if (_routeCache[key] && !routeMatchesEndpoints(_routeCache[key], dep, arr)) {
+      console.warn('[overview map] stale cached route — refetching:', leg.title);
+      _routeCache[key] = await fetchLegRoute(dep, arr);
+      _saveRouteCache(); usedApi = true;
+      d.status = 'route refreshed';
+    }
     d.geom = _routeCache[key];
     drawn.push(d);
     if (usedApi) await new Promise(r => setTimeout(r, 1100)); // respect Nominatim/OSRM limits
@@ -3091,6 +3099,19 @@ function closePhotoLightbox(e) {
   _lightboxPhotos = [];
 }
 
+// A cached route is only trustworthy if it still connects the CURRENT geocodes of
+// its addresses: routes are cached by address TEXT for 7 days, so when an address
+// is edited (or re-geocodes differently), the old geometry keeps being served —
+// drawn along the wrong path. Generous tolerance: OSRM snaps to the nearest road,
+// which can be far from a remote campground.
+function routeMatchesEndpoints(geom, dep, arr) {
+  const c = geom && geom.coordinates;
+  if (!c || c.length < 2) return false;
+  const [slon, slat] = c[0], [elon, elat] = c[c.length - 1];
+  return distanceMiles(slat, slon, dep.lat, dep.lon) < 25
+      && distanceMiles(elat, elon, arr.lat, arr.lon) < 25;
+}
+
 async function fetchLegRoute(dep, arr) {
   // dep/arr are {lat, lon} objects from geocode(). fetchWithTimeout, not raw fetch:
   // this also runs during photo-import warm-up, where an unbounded hang would block
@@ -3128,9 +3149,16 @@ async function initLegMap(container, tripColor) {
     return;
   }
 
-  // Resolve route — use cache if already warmed, otherwise fetch and persist
+  // Resolve route — use cache if already warmed, otherwise fetch and persist.
+  // Stale entries (geometry that no longer connects the current geocodes, e.g.
+  // after an address edit) are refetched instead of drawn along the wrong path.
   const routeKey = dep + '|' + arr;
   if (!(routeKey in _routeCache)) { _routeCache[routeKey] = await fetchLegRoute(depGeo, arrGeo); _saveRouteCache(); }
+  if (_routeCache[routeKey] && !routeMatchesEndpoints(_routeCache[routeKey], depGeo, arrGeo)) {
+    console.warn('[map] stale cached route — refetching:', routeKey);
+    _routeCache[routeKey] = await fetchLegRoute(depGeo, arrGeo);
+    _saveRouteCache();
+  }
   const route = _routeCache[routeKey];
   console.log('[map] route:', route ? route.type + ' ' + route.coordinates?.length + ' pts' : 'null (fallback line)');
 
