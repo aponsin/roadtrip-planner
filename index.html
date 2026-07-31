@@ -1591,6 +1591,16 @@ body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
         </div>
       </div>
     </div>
+    <!-- Misc-only fields -->
+    <div id="misc-fields" class="form-row" style="display:none">
+      <div class="ff" style="flex:3;min-width:200px">
+        <label>Location (optional)</label>
+        <div class="addr-wrap">
+          <input type="text" id="f-misc-addr" placeholder="Name or address…" oninput="updateMiscLink()">
+          <a id="lnk-misc" class="addr-link dim" href="#" target="_blank" title="Open in Google Maps">📍</a>
+        </div>
+      </div>
+    </div>
 
     <!-- Driving-only fields -->
     <div id="driving-fields" class="form-row" style="display:none">
@@ -2493,7 +2503,7 @@ const CSV_HEADERS = [
   'trip_name','trip_color',
   'title','category','start','end','description',
   'departure','arrival','distance_m','driving_seconds','time_on_road_h',
-  'sleeping_address','dining_address','sightseeing_address','event_ref','linked_next_ref','photos',
+  'sleeping_address','dining_address','sightseeing_address','misc_address','event_ref','linked_next_ref','photos',
 ];
 
 function csvCell(val) {
@@ -2831,6 +2841,14 @@ function openTripViz(tripId) {
         </div>`;
       }
 
+      // ── Misc ──
+      if (ev.category === 'misc' && ev.miscAddress) {
+        evExtra += `<div class="tviz-ev-drive">
+          <span class="tviz-chip" style="background:#fce7f3;color:#831843;border-color:#ec4899">📍 ${esc(ev.miscAddress)}</span>
+          <a href="${mapsSearch(ev.miscAddress)}" target="_blank">View on map</a>
+        </div>`;
+      }
+
       // ── Sightseeing / transportation → search link from title (fallback when no address) ──
       if ((ev.category === 'transportation' ||
            (ev.category === 'sightseeing' && !ev.sightseeingAddress) ||
@@ -2853,7 +2871,7 @@ function openTripViz(tripId) {
       // address field, and the category (both its label and raw key).
       const searchText = [
         ev.title, ev.description, ev.departure, ev.arrival,
-        ev.sleepingAddress, ev.diningAddress, ev.sightseeingAddress,
+        ev.sleepingAddress, ev.diningAddress, ev.sightseeingAddress, ev.miscAddress,
         cat.label, ev.category,
       ].filter(Boolean).join(' ').toLowerCase();
 
@@ -4056,6 +4074,7 @@ async function getEventCoord(ev) {
   const addr = ev.category === 'sleeping' ? ev.sleepingAddress
              : ev.category === 'dining' ? ev.diningAddress
              : ev.category === 'sightseeing' ? ev.sightseeingAddress
+             : ev.category === 'misc' ? ev.miscAddress
              : null;
   if (!addr) return null;
   if (!_geoCache[addr]) {
@@ -5449,7 +5468,7 @@ function ghBuildCSV(tripId) {
     ev.description || '',
     ev.departure || '', ev.arrival || '',
     ev.distanceM ?? '', ev.drivingSeconds ?? '', ev.timeOnRoadH ?? '',
-    ev.sleepingAddress || '', ev.diningAddress || '', ev.sightseeingAddress || '',
+    ev.sleepingAddress || '', ev.diningAddress || '', ev.sightseeingAddress || '', ev.miscAddress || '',
     refMap[ev.id],
     ev.linkedNextId != null ? (refMap[ev.linkedNextId] ?? '') : '',
     (ev.photos || []).join('|'),
@@ -5946,6 +5965,7 @@ async function executeGhLoad(token, owner, repo, selectedNames = null) {
           sleepingAddress:    get(row,'sleeping_address'),
           diningAddress:      get(row,'dining_address'),
           sightseeingAddress: get(row,'sightseeing_address'),
+          miscAddress:    get(row,'misc_address'),
           linkedNextId:   null,
           photos: get(row, 'photos') ? get(row, 'photos').split('|').filter(Boolean) : [],
         });
@@ -5993,7 +6013,7 @@ function exportTrip(tripId) {
     ev.description || '',
     ev.departure || '', ev.arrival || '',
     ev.distanceM ?? '', ev.drivingSeconds ?? '', ev.timeOnRoadH ?? '',
-    ev.sleepingAddress || '', ev.diningAddress || '', ev.sightseeingAddress || '',
+    ev.sleepingAddress || '', ev.diningAddress || '', ev.sightseeingAddress || '', ev.miscAddress || '',
     refMap[ev.id],                                           // event_ref (row index)
     ev.linkedNextId != null ? (refMap[ev.linkedNextId] ?? '') : '',  // linked_next_ref
     (ev.photos || []).join('|'),                              // photos (pipe-joined URLs)
@@ -6121,6 +6141,7 @@ function parseImportCSV(text) {
       sleepingAddress:    get(row, 'sleeping_address'),
       diningAddress:      get(row, 'dining_address'),
       sightseeingAddress: get(row, 'sightseeing_address'),
+      miscAddress:        get(row, 'misc_address'),
       linkedNextId:   null,
       photos: get(row, 'photos') ? get(row, 'photos').split('|').filter(Boolean) : [],
     });
@@ -6609,6 +6630,13 @@ function openForm(evObj, defaultDate, defaultTripId, newEventDebug) {
       document.getElementById('f-sightseeing-addr').value = evObj.sightseeingAddress || '';
       updateSightseeingLink();
     }
+    // Misc fields
+    const isMisc = evObj.category === 'misc';
+    document.getElementById('misc-fields').style.display = isMisc ? '' : 'none';
+    if (isMisc) {
+      document.getElementById('f-misc-addr').value = evObj.miscAddress || '';
+      updateMiscLink();
+    }
     // Driving fields
     const isDriving = evObj.category === 'driving';
     document.getElementById('driving-fields').style.display = isDriving ? '' : 'none';
@@ -6649,6 +6677,7 @@ function openForm(evObj, defaultDate, defaultTripId, newEventDebug) {
     document.getElementById('sleeping-fields').style.display     = 'none';
     document.getElementById('dining-fields').style.display       = 'none';
     document.getElementById('sightseeing-fields').style.display  = 'none';
+    document.getElementById('misc-fields').style.display         = 'none';
     document.getElementById('link-status-row').style.display = 'none';
     document.getElementById('link-src-badge').style.display  = 'none';
     document.getElementById('link-dst-badge').style.display  = 'none';
@@ -6750,6 +6779,7 @@ function onCatChange() {
   document.getElementById('sleeping-fields').style.display    = cat === 'sleeping'    ? '' : 'none';
   document.getElementById('dining-fields').style.display      = cat === 'dining'      ? '' : 'none';
   document.getElementById('sightseeing-fields').style.display = cat === 'sightseeing' ? '' : 'none';
+  document.getElementById('misc-fields').style.display        = cat === 'misc'        ? '' : 'none';
   updateNewEventLinkOption(); // chainability may have changed
 }
 
@@ -6772,6 +6802,14 @@ function updateDiningLink() {
 function updateSightseeingLink() {
   const q   = document.getElementById('f-sightseeing-addr')?.value.trim();
   const lnk = document.getElementById('lnk-sightseeing');
+  if (!lnk) return;
+  if (q) { lnk.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`; lnk.classList.remove('dim'); }
+  else   { lnk.href = '#'; lnk.classList.add('dim'); }
+}
+
+function updateMiscLink() {
+  const q   = document.getElementById('f-misc-addr')?.value.trim();
+  const lnk = document.getElementById('lnk-misc');
   if (!lnk) return;
   if (q) { lnk.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`; lnk.classList.remove('dim'); }
   else   { lnk.href = '#'; lnk.classList.add('dim'); }
@@ -6819,6 +6857,9 @@ function setupAddressAutocomplete() {
   });
   initAutocomplete('f-sightseeing-addr', (name) => {
     updateSightseeingLink();
+  });
+  initAutocomplete('f-misc-addr', (name) => {
+    updateMiscLink();
   });
 }
 
@@ -7038,7 +7079,7 @@ function clearLinksTo(evId) {
 function isChainableEv(ev) {
   if (!ev) return false;
   if (ev.category === 'driving') return true;
-  if (ev.sleepingAddress || ev.diningAddress || ev.sightseeingAddress) return true;
+  if (ev.sleepingAddress || ev.diningAddress || ev.sightseeingAddress || ev.miscAddress) return true;
   // Also include if already chained (address may have been cleared after linking)
   if (ev.linkedNextId || linkedPrev(ev.id)) return true;
   return false;
@@ -7112,7 +7153,7 @@ function updateNewEventLinkOption() {
   if (!opt || !row) return;
   if (editingId !== null) { opt.style.display = 'none'; return; } // edit mode: badges own the row
   const cat = document.getElementById('f-cat').value;
-  const chainable = ['driving', 'sleeping', 'dining', 'sightseeing'].includes(cat);
+  const chainable = ['driving', 'sleeping', 'dining', 'sightseeing', 'misc'].includes(cat);
   const tripRaw = document.getElementById('f-trip').value;
   const start = getStartFromFields();
   const tripId = tripRaw ? parseInt(tripRaw) : null;
@@ -7184,7 +7225,7 @@ function syncDeparturePrefill(prevCand) {
 function evChainAddr(ev) {
   if (!ev) return '';
   if (ev.category === 'driving') return ev.arrival || '';
-  return ev.sleepingAddress || ev.diningAddress || ev.sightseeingAddress || '';
+  return ev.sleepingAddress || ev.diningAddress || ev.sightseeingAddress || ev.miscAddress || '';
 }
 
 async function refreshEventRoute(ev) {
@@ -7372,6 +7413,8 @@ function submitForm() {
   const diningAddress      = cat === 'dining'      ? (document.getElementById('f-dining-addr')?.value.trim()      || '') : '';
   // Sightseeing-specific fields
   const sightseeingAddress = cat === 'sightseeing' ? (document.getElementById('f-sightseeing-addr')?.value.trim() || '') : '';
+  // Misc-specific fields
+  const miscAddress        = cat === 'misc'        ? (document.getElementById('f-misc-addr')?.value.trim()        || '') : '';
 
   // Driving-specific fields
   const departure       = cat === 'driving' ? (document.getElementById('f-departure')?.value.trim() || '') : '';
@@ -7380,13 +7423,13 @@ function submitForm() {
   const drivingSeconds  = cat === 'driving' && routeData ? routeData.drivingSeconds : null;
   const timeOnRoadH     = cat === 'driving' && routeData ? routeData.timeOnRoadH    : null;
 
-  const drivingFields = { departure, arrival, distanceM, drivingSeconds, timeOnRoadH, sleepingAddress, diningAddress, sightseeingAddress };
+  const drivingFields = { departure, arrival, distanceM, drivingSeconds, timeOnRoadH, sleepingAddress, diningAddress, sightseeingAddress, miscAddress };
 
   let savedEv;
   if (editingId !== null) {
     savedEv = events.find(e => e.id === editingId);
     // Preserve existing link if new category is still chainable, otherwise drop it
-    const chainableCats = ['driving', 'sleeping', 'dining', 'sightseeing'];
+    const chainableCats = ['driving', 'sleeping', 'dining', 'sightseeing', 'misc'];
     const keepLink = chainableCats.includes(cat) ? savedEv?.linkedNextId : null;
     if (savedEv) {
       // Bust route cache if departure or arrival changed on a driving event
@@ -7474,6 +7517,10 @@ function showPop(e, ev) {
   } else if (ev.category === 'sightseeing' && ev.sightseeingAddress) {
     const q = encodeURIComponent(ev.sightseeingAddress);
     popDrivingHtml += `<div>📸 <a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank">${esc(ev.sightseeingAddress)}</a></div>`;
+    showDrivingEl = true;
+  } else if (ev.category === 'misc' && ev.miscAddress) {
+    const q = encodeURIComponent(ev.miscAddress);
+    popDrivingHtml += `<div>📍 <a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank">${esc(ev.miscAddress)}</a></div>`;
     showDrivingEl = true;
   } else if (ev.category === 'driving' && (ev.departure || ev.arrival || ev.distanceM != null)) {
     if (ev.departure) {
