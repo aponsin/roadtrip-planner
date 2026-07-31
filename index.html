@@ -767,14 +767,18 @@ body:has(#photo-lightbox.open) .undo-area { display: none !important; }
   display: flex; gap: 12px; align-items: flex-start;
   padding: 9px 12px; border-radius: 9px; margin-bottom: 0; margin-top: 6px;
   background: #f8fafc; border: 1px solid #f1f5f9;
+  position: relative; /* anchors the edit-mode pencil button */
 }
 .tviz-ev:hover { border-color: #e2e8f0; }
 .tviz-ev-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
-.tviz-ev-body { flex: 1; min-width: 0; }
+.tviz-ev-body { flex: 1; min-width: 0; position: relative; /* anchors the edit pencil */ }
 .tviz-ev-title { font-size: 13px; font-weight: 600; color: #0f172a; }
 .tviz-ev-time { font-size: 11px; color: #64748b; margin-top: 1px; }
 .tviz-ev-desc { font-size: 12px; color: #475569; margin-top: 4px; white-space: pre-wrap; }
-.tviz-ev-desc:empty { display: none; } /* rendered even when blank so edit mode can add notes */
+/* An empty description keeps its slot (same height it needs in edit mode), so
+   toggling edit mode never shifts cards vertically. Collapsed only in print. */
+.tviz-ev-desc:empty { display: block; min-height: 18px; }
+@media print { .tviz-ev-desc:empty { display: none; } }
 /* Edit mode: titles + descriptions editable in place */
 #trip-viz-modal.edit-mode [data-tviz-title],
 #trip-viz-modal.edit-mode [data-tviz-desc] {
@@ -785,11 +789,13 @@ body:has(#photo-lightbox.open) .undo-area { display: none !important; }
 #trip-viz-modal.edit-mode [data-tviz-desc]:focus {
   outline: 2px solid #6366f1; background: #fff;
 }
-#trip-viz-modal.edit-mode .tviz-ev-desc:empty { display: block; min-height: 18px; }
-/* Edit mode: per-event "open in editor" shortcut */
+/* Edit mode: per-event "open in editor" shortcut. Overlays the top-right corner
+   of the title's dashed edit box (anchored to .tviz-ev-body, whose top-right
+   corner is exactly where that outline sits, offset for the 2px outline gap) —
+   no reflow, and it lines up with the box instead of floating above it. */
 .tviz-ev-editbtn {
-  display: none; margin-left: auto; align-self: flex-start; flex-shrink: 0;
-  width: 24px; height: 24px; border-radius: 6px; border: 1px solid #e2e8f0;
+  display: none; position: absolute; top: -3px; right: -3px; z-index: 2;
+  width: 22px; height: 22px; border-radius: 6px; border: 1px solid #e2e8f0;
   background: #fff; color: #475569; cursor: pointer;
   align-items: center; justify-content: center;
 }
@@ -2854,11 +2860,11 @@ function openTripViz(tripId) {
       bodyHtml += `<div class="tviz-ev" style="${cardStyle}" data-evid="${ev.id}" data-photos="${ev.photos && ev.photos.length ? 1 : 0}" data-search="${esc(searchText)}">
         <div class="tviz-ev-icon">${isStart ? cat.emoji : '↕'}</div>
         <div class="tviz-ev-body">
+          <button type="button" class="tviz-ev-editbtn" onclick="tvizEditEvent(${ev.id})" title="Open in event editor"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8.5 1.5l2 2L4 10l-2.5.5L2 8l6.5-6.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button>
           <div class="tviz-ev-title" data-tviz-title="${ev.id}">${esc(ev.title)}</div>
           <div class="tviz-ev-time">${timeStr} &nbsp;·&nbsp; ${cat.label}</div>
           ${evExtra}
         </div>
-        <button type="button" class="tviz-ev-editbtn" onclick="tvizEditEvent(${ev.id})" title="Open in event editor"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8.5 1.5l2 2L4 10l-2.5.5L2 8l6.5-6.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button>
       </div>`;
     }
     bodyHtml += `</div>`;
