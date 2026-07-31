@@ -20,6 +20,8 @@ on:
     paths:
       - 'index.html'
       - 'docs/**'
+      - 'shared/*.html'   # share preview pages only — the frequently-refreshed
+                          # shared/*.json payloads do NOT trigger deploys
   workflow_dispatch:   # manual "Run workflow" button, just in case
  
 permissions:
@@ -48,6 +50,9 @@ jobs:
           mkdir -p _site
           cp index.html _site/
           [ -d docs ] && cp -r docs _site/docs || true
+          # Share preview pages (og:/title stubs that redirect into the app)
+          mkdir -p _site/shared
+          cp shared/*.html _site/shared/ 2>/dev/null || true
  
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
@@ -55,3 +60,4 @@ jobs:
           path: '_site'
       - uses: actions/deploy-pages@v4
         id: deployment
+ 
