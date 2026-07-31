@@ -2482,6 +2482,12 @@ function finishRename(id) {
         delete syncState[oldKey];
         saveSyncState();
       }
+      // Remember the retired filename(s): the next save archives + deletes the old
+      // CSV on GitHub and records the rename for other devices (see executeGhSave).
+      if (oldKey !== newKey) {
+        t.prevFilenames = (t.prevFilenames || []).filter(k => k !== newKey);
+        if (!t.prevFilenames.includes(oldKey)) t.prevFilenames.push(oldKey);
+      }
     }
   }
   renamingId = null;
@@ -5258,6 +5264,84 @@ function syncVerdict(stored, localHash, remoteSha) {
   return 'in-sync';
 }
 
+// ── RENAME PROPAGATION ─────────────────────────────────────────────────────────
+// Renaming a trip changes its CSV filename (the trip's cross-device identity), so a
+// rename must travel: the renaming device retires the old file on its next save and
+// appends the rename to a small shared ledger (data/renames.json, capped at 50
+// entries). Every other device consults the ledger whenever one of its local trips'
+// files has vanished from the remote listing, and renames its local copy to follow —
+// carrying the sync fingerprint so nothing suddenly looks foreign or diverged.
+async function ghAppendRename(oldFile, newFile, newName, token, owner, repo) {
+  const path = 'data/renames.json';
+  const cur = await ghApi('GET', path, null, token, owner, repo);
+  let list = [];
+  if (cur) { try { list = JSON.parse(ghDecode(cur.content)); } catch (_) {} }
+  if (!Array.isArray(list)) list = [];
+  list = list.filter(r => !(r.old === oldFile));   // newest mapping for a source wins
+  list.push({ old: oldFile, new: newFile, newName, at: Date.now() });
+  if (list.length > 50) list = list.slice(-50);
+  await ghPutFileSafe(path, `Record rename: ${oldFile} → ${newFile}`,
+    ghEncode(JSON.stringify(list)), token, owner, repo);
+}
+
+// Apply ledger entries to local trips. Pure data transform (no I/O, no rendering) so
+// it's unit-testable; returns how many trips were renamed. listingNames = Set of CSV
+// filenames currently on GitHub (a rename is followed only if its target exists).
+function applyRenameEntries(renames, listingNames) {
+  const applied = [];
+  for (const r of (renames || [])) {
+    if (!r || !r.old || !r.new) continue;
+    const t = trips.find(x => ghTripFilename(x) === r.old);
+    if (!t) continue;                                         // nothing local under the old name
+    if (!listingNames.has(r.new)) continue;                   // target not (yet) on GitHub
+    if (trips.some(x => x !== t && ghTripFilename(x) === r.new)) continue; // would collide
+    // "Clean" = no local edits since the last sync under the old name; decided
+    // BEFORE renaming, because the name is part of the CSV content.
+    const wasClean = !!(syncState[r.old] &&
+      syncState[r.old].csvHash === strHash(ghBuildCSV(t.id) || ''));
+    t.name = r.newName || r.new.replace(/\.csv$/, '');
+    // Follow with the fingerprint (verdicts stay meaningful) and drop any pending
+    // cleanup of the old name — the renaming device owns that.
+    if (syncState[r.old]) { syncState[r.new] = syncState[r.old]; delete syncState[r.old]; }
+    if (t.prevFilenames) t.prevFilenames = t.prevFilenames.filter(k => k !== r.old);
+    applied.push({ trip: t, newFile: r.new, wasClean });
+  }
+  return applied;
+}
+
+// Ledger lookup used by checkSyncStatus when local files are missing remotely.
+async function followRemoteRenames(listing, token, owner, repo) {
+  const names = new Set(listing.filter(f => f.name.endsWith('.csv')).map(f => f.name));
+  const missing = trips.some(t => events.some(e => e.tripId === t.id) &&
+    syncState[ghTripFilename(t)] && !names.has(ghTripFilename(t)));
+  if (!missing) return false;
+  let ledger = null;
+  try {
+    const cur = await ghApi('GET', 'data/renames.json', null, token, owner, repo);
+    if (cur) ledger = JSON.parse(ghDecode(cur.content));
+  } catch (_) { return false; }
+  if (!Array.isArray(ledger)) return false;
+  const applied = applyRenameEntries(ledger, names);
+  if (!applied.length) return false;
+  // Reconcile fingerprints: identical content → in-sync; clean-but-different →
+  // remote-ahead (the rename save carried other edits); dirty → honest diverged.
+  for (const a of applied) {
+    try {
+      const f = await ghApi('GET', `data/${a.newFile}`, null, token, owner, repo);
+      if (!f) continue;
+      const localCsv = ghBuildCSV(a.trip.id) || '';
+      if (ghDecode(f.content) === localCsv) {
+        recordTripSync(a.trip, f.sha);          // → in-sync
+      } else if (a.wasClean && syncState[a.newFile]) {
+        syncState[a.newFile].csvHash = strHash(localCsv); // local unchanged → remote-ahead
+      }
+    } catch (_) { /* verdicts fall back to the carried fingerprint */ }
+  }
+  saveSyncState(); save();
+  renderSidebar(); render(); refreshTripSelect();
+  return true;
+}
+
 function recordTripSync(trip, remoteSha) {
   const csv = ghBuildCSV(trip.id);
   if (csv == null || !remoteSha) return;
@@ -5316,6 +5400,9 @@ async function checkSyncStatus(force = false) {
     listing = await ghApi('GET', 'data', null, cfg.token, owner, repo);
   } catch (_) { return; } // offline — try again next cycle
   if (!Array.isArray(listing)) return;
+  // A local trip's file missing remotely may simply mean it was renamed elsewhere —
+  // follow the rename ledger before classifying, so verdicts use the new identity.
+  try { await followRemoteRenames(listing, cfg.token, owner, repo); } catch (_) {}
   _lastSyncListing = listing;
   _lastSyncVerdicts = classifyTripsAgainstListing(listing);
   renderSyncStatusUI();
@@ -5666,6 +5753,35 @@ async function ghSave() {
   executeGhSave(tripsToSave.map(t => t.id), token, owner, repo, repoStr, deviceLabel);
 }
 
+// Rename housekeeping — once the trip's file exists on GitHub under its CURRENT
+// name, retire any CSVs it used to live under: archive to data/history/, delete from
+// data/, and record the rename in the shared ledger (data/renames.json) so every
+// other device renames its local copy to follow. Failures keep the entry queued in
+// trip.prevFilenames and retry on the next save.
+async function ghRenameHousekeeping(trip, filename, deviceLabel, token, owner, repo) {
+  if (!trip.prevFilenames || !trip.prevFilenames.length) return;
+  const done = [];
+  for (const oldName of trip.prevFilenames) {
+    if (oldName === filename) { done.push(oldName); continue; }
+    try {
+      const oldFile = await ghApi('GET', `data/${oldName}`, null, token, owner, repo);
+      if (oldFile) {
+        const histName = ghHistoryFilename({ name: oldName.replace(/\.csv$/, '') }, `${deviceLabel}-renamed`);
+        await ghPutFileSafe(`data/history/${histName}`, `Archive before rename cleanup: ${oldName}`,
+          oldFile.content.replace(/\n/g, ''), token, owner, repo);
+        await ghDeleteFileSafe(`data/${oldName}`, `Rename cleanup: ${oldName} → ${filename}`, token, owner, repo);
+        ghLog(`  ↳ retired old file ${oldName} (archived to history)`, 'info');
+      }
+      await ghAppendRename(oldName, filename, trip.name, token, owner, repo);
+      done.push(oldName);
+    } catch (err) {
+      ghLog(`  ⚠ Rename cleanup of ${oldName} failed (will retry next save): ${err.message}`, 'warn');
+    }
+  }
+  trip.prevFilenames = trip.prevFilenames.filter(n => !done.includes(n));
+  save();
+}
+
 async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) {
   const tripsToSave = trips.filter(t => tripIds.includes(t.id));
   if (!tripsToSave.length) return;
@@ -5687,6 +5803,7 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
         if (oldCsv === newCsv) {
           ghLog(`→ "${trip.name}" unchanged, skipped`, 'info');
           recordTripSync(trip, existing.sha); // identical content IS a sync point
+          await ghRenameHousekeeping(trip, filename, deviceLabel, token, owner, repo);
           skipped++;
           continue;
         }
@@ -5711,6 +5828,8 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
       if (newSha) recordTripSync(trip, newSha);
       ghLog(`✓ Saved "${trip.name}"`, 'ok');
       saved++;
+
+      await ghRenameHousekeeping(trip, filename, deviceLabel, token, owner, repo);
     } catch(err) {
       ghLog(`✗ "${trip.name}": ${err.message}`, 'error');
       failed++;
@@ -5735,7 +5854,11 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
         const canonical = `${slug}.json`;
         const hasLegacy = [...names].some(n =>
           n.startsWith(slug + '-') && /^[0-9a-f]{8}\.json$/.test(n.slice(slug.length + 1)));
-        if (!names.has(canonical) && !hasLegacy) continue;
+        // A renamed trip's shared files live under its PREVIOUS slug — count those
+        // too, so the first save after a rename migrates the share instead of
+        // silently deciding the trip was never shared.
+        const prevShared = trip.shareSlug && trip.shareSlug !== slug && names.has(`${trip.shareSlug}.json`);
+        if (!names.has(canonical) && !hasLegacy && !prevShared) continue;
         const payload = buildSharePayload(trip);
         if (names.has(canonical)) {
           // Skip the commit when nothing shared-visible changed
