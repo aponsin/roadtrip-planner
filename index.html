@@ -5209,6 +5209,48 @@ function buildSharePayload(trip) {
   return { version: '2.0', generatedAt: Date.now(), trip: { ...trip }, events: tripEvents };
 }
 
+// Static PREVIEW PAGE for a shared trip (shared/{slug}.html, served by GitHub
+// Pages). Link unfurlers (iMessage, WhatsApp, Slack…) read <title>/og: tags from
+// raw HTML without running JS, so the app's runtime document.title is invisible
+// to them — this stub is what makes a shared link preview as the TRIP (name,
+// dates, first photo) instead of "Road Trip Planner". It immediately redirects
+// into the app. `stubSlug` lets a renamed trip's old address point at the new one.
+function buildShareStubHTML(trip, tripEvents, owner, repo, stubSlug) {
+  const slug = stubSlug || ghTripSlug(trip);
+  const app = `https://${owner}.github.io/${repo}/?share=${encodeURIComponent(slug)}`;
+  let dates = '';
+  if (tripEvents.length) {
+    let min = Infinity, max = -Infinity;
+    for (const e of tripEvents) {
+      const s = +new Date(e.start), en = +new Date(e.end);
+      if (s < min) min = s;
+      if (en > max) max = en;
+    }
+    const fmt = d => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const days = Math.max(1, Math.round((max - min) / 86400000));
+    dates = `${fmt(min)} – ${fmt(max)}, ${new Date(max).getFullYear()} · ${days} day${days === 1 ? '' : 's'}`;
+  }
+  const firstWithPhoto = tripEvents.find(e => e.photos && e.photos.length);
+  const photo = firstWithPhoto ? firstWithPhoto.photos[0] : '';
+  const title = esc(trip.name);
+  const desc = esc(dates ? `${dates} · Road trip itinerary` : 'Road trip itinerary');
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>${title} — Road Trip</title>
+<meta property="og:title" content="${title}">
+<meta property="og:description" content="${desc}">
+<meta property="og:type" content="website">
+<meta property="og:url" content="${esc(app)}">
+${photo ? `<meta property="og:image" content="${esc(photo)}">\n<meta name="twitter:card" content="summary_large_image">` : ''}
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="0;url=${esc(app)}">
+<scr${''}ipt>location.replace(${JSON.stringify(app)});</scr${''}ipt>
+</head><body style="font-family:system-ui;padding:24px">
+<p>Opening “${title}”… <a href="${esc(app)}">tap here if nothing happens</a>.</p>
+</body></html>`;
+}
+
 // Compare two share payloads ignoring generatedAt, to skip no-op refresh commits.
 function sharePayloadEqual(a, b) {
   try {
@@ -5700,18 +5742,27 @@ async function ghShareTrip(tripId) {
     // lost response collides with our own already-landed write (lossy connections).
     await ghPutFileSafe(filePath, `Share trip: ${trip.name}`, ghEncode(JSON.stringify(payload)), token, owner, repo);
 
-    // Trip renamed since it was last shared? Leave a pointer at the old address so
-    // links minted under the previous name keep working.
+    // Static preview page (title/og tags for iMessage & co.) — this is the URL
+    // people actually get; it redirects into the app.
+    const tripEvs = events.filter(e => e.tripId === trip.id);
+    await ghPutFileSafe(`shared/${shareId}.html`, `Share preview page: ${trip.name}`,
+      ghEncode(buildShareStubHTML(trip, tripEvs, owner, repo)), token, owner, repo);
+
+    // Trip renamed since it was last shared? Leave pointers at the old address so
+    // links minted under the previous name keep working (JSON for the app, HTML
+    // stub re-targeted at the new slug for previews/redirects).
     if (trip.shareSlug && trip.shareSlug !== shareId) {
       try {
         await ghPutFileSafe(`shared/${trip.shareSlug}.json`, `Redirect old share link: ${trip.name}`,
           ghEncode(JSON.stringify({ version: '2.0', redirect: shareId })), token, owner, repo);
+        await ghPutFileSafe(`shared/${trip.shareSlug}.html`, `Redirect old share page: ${trip.name}`,
+          ghEncode(buildShareStubHTML(trip, tripEvs, owner, repo, shareId)), token, owner, repo);
       } catch (_) { /* best effort */ }
     }
     trip.shareSlug = shareId;
     save();
 
-    const shareUrl = `https://${owner}.github.io/${repo}/?share=${shareId}`;
+    const shareUrl = `https://${owner}.github.io/${repo}/shared/${shareId}.html`;
     document.getElementById('share-url-input').value = shareUrl;
     document.getElementById('share-copy-btn').textContent = 'Copy';
     document.getElementById('share-modal').classList.add('open');
@@ -5861,21 +5912,39 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
         if (!names.has(canonical) && !hasLegacy && !prevShared) continue;
         const payload = buildSharePayload(trip);
         if (names.has(canonical)) {
-          // Skip the commit when nothing shared-visible changed
+          // Skip the commit when nothing shared-visible changed — but still create
+          // the static preview page if it's missing (shares made before preview
+          // pages existed get one on their next save, data changed or not).
           const cur = await ghApi('GET', `shared/${canonical}`, null, token, owner, repo);
           if (cur) {
-            try { if (sharePayloadEqual(JSON.parse(ghDecode(cur.content)), payload)) continue; }
+            let unchanged = false;
+            try { unchanged = sharePayloadEqual(JSON.parse(ghDecode(cur.content)), payload); }
             catch (_) { /* unreadable → just overwrite */ }
+            if (unchanged) {
+              if (!names.has(`${slug}.html`)) {
+                await ghPutFileSafe(`shared/${slug}.html`, `Add share preview page: ${trip.name}`,
+                  ghEncode(buildShareStubHTML(trip, events.filter(e => e.tripId === trip.id), owner, repo)), token, owner, repo);
+                ghLog(`  ↳ added share preview page for "${trip.name}"`, 'info');
+              }
+              continue;
+            }
           }
         }
         await ghPutFileSafe(`shared/${canonical}`, `Refresh shared trip: ${trip.name}`,
           ghEncode(JSON.stringify(payload)), token, owner, repo);
+        // Keep the static preview page fresh too (identical content is skipped by
+        // the sha-safe writer, so this rarely creates a commit).
+        const stubEvs = events.filter(e => e.tripId === trip.id);
+        await ghPutFileSafe(`shared/${slug}.html`, `Refresh share preview page: ${trip.name}`,
+          ghEncode(buildShareStubHTML(trip, stubEvs, owner, repo)), token, owner, repo);
         // Renamed since last shared? Point the old address at the new one so
         // links minted under the previous name keep working.
         if (trip.shareSlug && trip.shareSlug !== slug && names.has(`${trip.shareSlug}.json`)) {
           try {
             await ghPutFileSafe(`shared/${trip.shareSlug}.json`, `Redirect old share link: ${trip.name}`,
               ghEncode(JSON.stringify({ version: '2.0', redirect: slug })), token, owner, repo);
+            await ghPutFileSafe(`shared/${trip.shareSlug}.html`, `Redirect old share page: ${trip.name}`,
+              ghEncode(buildShareStubHTML(trip, stubEvs, owner, repo, slug)), token, owner, repo);
           } catch (_) { /* best effort */ }
         }
         trip.shareSlug = slug;
