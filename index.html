@@ -713,7 +713,7 @@ body:has(#photo-lightbox.open) .undo-area { display: none !important; }
   font-size: 15px; line-height: 1;
 }
 .tviz-leg-map.tviz-overview-map { /* outrank .tviz-leg-map's own height:200px */
-  height: 600px; margin: 12px 24px 0;
+  height: 550px; margin: 12px 24px 0;
   border-radius: 10px;
 }
 .tviz-overview-note { font-size: 11px; color: #92400e; margin: 6px 26px 0; line-height: 1.5; }
@@ -774,6 +774,31 @@ body:has(#photo-lightbox.open) .undo-area { display: none !important; }
 .tviz-ev-title { font-size: 13px; font-weight: 600; color: #0f172a; }
 .tviz-ev-time { font-size: 11px; color: #64748b; margin-top: 1px; }
 .tviz-ev-desc { font-size: 12px; color: #475569; margin-top: 4px; white-space: pre-wrap; }
+.tviz-ev-desc:empty { display: none; } /* rendered even when blank so edit mode can add notes */
+/* Edit mode: titles + descriptions editable in place */
+#trip-viz-modal.edit-mode [data-tviz-title],
+#trip-viz-modal.edit-mode [data-tviz-desc] {
+  outline: 1px dashed #cbd5e1; outline-offset: 2px; border-radius: 4px;
+  cursor: text; min-width: 40px;
+}
+#trip-viz-modal.edit-mode [data-tviz-title]:focus,
+#trip-viz-modal.edit-mode [data-tviz-desc]:focus {
+  outline: 2px solid #6366f1; background: #fff;
+}
+#trip-viz-modal.edit-mode .tviz-ev-desc:empty { display: block; min-height: 18px; }
+/* Edit mode: per-event "open in editor" shortcut */
+.tviz-ev-editbtn {
+  display: none; margin-left: auto; align-self: flex-start; flex-shrink: 0;
+  width: 24px; height: 24px; border-radius: 6px; border: 1px solid #e2e8f0;
+  background: #fff; color: #475569; cursor: pointer;
+  align-items: center; justify-content: center;
+}
+.tviz-ev-editbtn:hover { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
+#trip-viz-modal.edit-mode .tviz-ev-editbtn { display: inline-flex; }
+body.read-only .tviz-ev-editbtn { display: none !important; }
+#trip-viz-modal.edit-mode .tviz-ev-desc:empty:not(:focus)::before {
+  content: 'Add notes…'; color: #94a3b8; font-style: italic; pointer-events: none;
+}
 .tviz-ev-drive {
   display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center;
 }
@@ -1209,8 +1234,21 @@ body:has(#photo-lightbox.open) .undo-area { display: none !important; }
 .tviz-photo-thumb {
   width: 100%; height: 200px; object-fit: cover; border-radius: 8px;
   border: 1px solid #e2e8f0; cursor: pointer; transition: transform .12s, box-shadow .12s;
+  display: block; /* kills the inline-baseline gap that shifted rows in edit mode */
 }
 .tviz-photo-thumb:hover { transform: scale(1.02); box-shadow: 0 4px 14px rgba(0,0,0,.2); }
+.tviz-photo-wrap { position: relative; display: contents; }
+.tviz-photo-del {
+  display: none; position: absolute; top: 6px; right: 6px; z-index: 2;
+  width: 26px; height: 26px; border-radius: 50%; border: none; cursor: pointer;
+  background: rgba(220, 38, 38, .92); color: #fff; font-size: 13px; font-weight: 700;
+  align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(0,0,0,.3);
+}
+#trip-viz-modal.edit-mode .tviz-photo-del { display: flex; }
+/* In edit mode the wrap becomes a real grid item (so the ✕ can anchor to it);
+   the img keeps its own 100% × 200px sizing, giving the wrap identical layout. */
+#trip-viz-modal.edit-mode .tviz-photo-wrap { display: block; position: relative; }
+body.read-only #tviz-edit-btn { display: none !important; }
 .pop-photos { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 4px; }
 .pop-photo-thumb {
   width: 44px; height: 44px; object-fit: cover; border-radius: 5px;
@@ -1658,6 +1696,7 @@ body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
     <div class="tviz-header">
       <div class="tviz-color-bar" id="tviz-color-bar"></div>
       <div class="tviz-title" id="tviz-title"></div>
+      <button class="tviz-print-btn" id="tviz-edit-btn" onclick="toggleTvizEditMode()" title="Edit mode — edit titles &amp; notes, delete photos">🖊 Edit</button>
       <button class="tviz-print-btn" onclick="printTripViz()" title="Print / Save as PDF">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect x="3" y="1" width="10" height="7" rx="1" stroke="currentColor" stroke-width="1.4"/>
@@ -1908,10 +1947,27 @@ async function loadSharedView(id) {
   banner.textContent = 'Loading shared trip…';
 
   try {
-    const url = `https://raw.githubusercontent.com/aponsin/roadtrip-planner/main/shared/${id}.json`;
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error('not found');
-    const payload = await resp.json();
+    // A share id may be a legacy random-snapshot id ({slug}-{8 hex}) from before
+    // links were canonical (one per trip). Try the canonical LIVE file first so old
+    // links in the wild show the latest data; fall back to the frozen legacy
+    // snapshot if the owner hasn't synced since the upgrade. Cache-busted: viewers
+    // should never see a CDN-stale copy of a trip that was just updated.
+    const base = 'https://raw.githubusercontent.com/aponsin/roadtrip-planner/main/shared/';
+    const fetchShare = async name => {
+      const resp = await fetch(`${base}${encodeURIComponent(name)}.json?cb=${Date.now()}`, { cache: 'no-store' });
+      return resp.ok ? resp.json() : null;
+    };
+    let payload = null;
+    for (const cand of shareLinkCandidates(id)) {
+      let p = await fetchShare(cand).catch(() => null);
+      // Renamed trips leave a pointer at their old address — follow it (a trip
+      // renamed more than once leaves a short chain; capped to avoid loops).
+      for (let hop = 0; p && p.redirect && hop < 3; hop++) {
+        p = await fetchShare(p.redirect).catch(() => null);
+      }
+      if (p && p.trip) { payload = p; break; }
+    }
+    if (!payload) throw new Error('not found');
 
     // Load trip
     trips = [payload.trip];
@@ -1939,6 +1995,7 @@ async function loadSharedView(id) {
 
     readOnlyMode = true;
     document.body.classList.add('read-only');
+    document.title = payload.trip.name; // shared links are about the trip, not the app
 
     // Close sidebar by default in shared view
     sbOpen = false;
@@ -2061,6 +2118,30 @@ function init() {
     const flush = () => { if (_importRenderDeferred) setTimeout(() => renderImportModal(), 0); };
     importBody.addEventListener('change', flush);
     importBody.addEventListener('focusout', flush);
+  }
+
+  // Trip Summary edit mode: in-place title/description editing (delegated).
+  const tvizBody = document.getElementById('tviz-body');
+  if (tvizBody) {
+    const isEditable = el => el && el.hasAttribute &&
+      (el.hasAttribute('data-tviz-title') || el.hasAttribute('data-tviz-desc'));
+    tvizBody.addEventListener('focusin', e => {
+      if (isEditable(e.target)) e.target._tvizOrig = e.target.innerText;
+    });
+    tvizBody.addEventListener('focusout', e => {
+      if (isEditable(e.target)) tvizCommitEdit(e.target);
+    });
+    tvizBody.addEventListener('keydown', e => {
+      const el = e.target;
+      if (!isEditable(el)) return;
+      if (e.key === 'Enter' && el.hasAttribute('data-tviz-title')) {
+        e.preventDefault(); el.blur();          // titles are single-line
+      } else if (e.key === 'Escape') {
+        el.textContent = el._tvizOrig ?? el.innerText; // revert, don't close the modal
+        e.stopPropagation();
+        el.blur();
+      }
+    });
   }
 
   // SAME-DEVICE convergence: two tabs (or an iOS-frozen page revived hours later)
@@ -2418,6 +2499,88 @@ function csvCell(val) {
 
 // ── TRIP VISUALIZATION ─────────────────────────────────────────────────────────
 let tvizCurrentTripId = null;
+// ── Trip Summary photo edit mode ──────────────────────────────────────────────
+// A discreet Edit toggle in the summary header: while on, every photo thumbnail
+// shows a ✕ that deletes the photo from the event AND from GitHub (same behavior
+// as removing it in the event form). Off by default on every open; hidden in the
+// read-only shared view.
+let tvizEditMode = false;
+function toggleTvizEditMode() {
+  tvizEditMode = !tvizEditMode;
+  const modal = document.getElementById('trip-viz-modal');
+  const btn = document.getElementById('tviz-edit-btn');
+  if (modal) modal.classList.toggle('edit-mode', tvizEditMode);
+  if (btn) btn.textContent = tvizEditMode ? '✓ Done' : '🖊 Edit';
+  // Titles and descriptions become editable in place ('plaintext-only' keeps pasted
+  // formatting out; Safari and Chrome both support it, fall back to true elsewhere)
+  document.querySelectorAll('#tviz-body [data-tviz-title], #tviz-body [data-tviz-desc]').forEach(el => {
+    try { el.contentEditable = tvizEditMode ? 'plaintext-only' : 'false'; }
+    catch (_) { el.contentEditable = tvizEditMode ? 'true' : 'false'; }
+  });
+}
+
+// Edit-mode shortcut: close the summary and open the event in the full editor.
+function tvizEditEvent(evId) {
+  const ev = events.find(e => e.id === evId);
+  if (!ev || readOnlyMode) return;
+  closeTripViz();
+  openForm(ev);
+}
+
+// Commit an in-place title/description edit back to the event.
+function tvizCommitEdit(el) {
+  const isTitle = el.hasAttribute('data-tviz-title');
+  const evId = parseInt(el.getAttribute(isTitle ? 'data-tviz-title' : 'data-tviz-desc'));
+  const ev = events.find(e => e.id === evId);
+  if (!ev) return;
+  if (isTitle) {
+    const val = el.innerText.replace(/\n/g, ' ').trim();
+    if (!val) { el.textContent = ev.title; return; } // empty title → revert
+    if (val === ev.title) { el.textContent = ev.title; return; }
+    ev.title = val;
+    // A multi-day event shows its title on every day card — keep them in sync
+    document.querySelectorAll(`#tviz-body [data-tviz-title="${evId}"]`).forEach(t => { t.textContent = val; });
+    tvizRefreshSearchIndex(evId, val);
+    save(); render(); // calendar bars show titles
+  } else {
+    const val = el.innerText.replace(/\s+$/, '');
+    const norm = val.trim() ? val : '';
+    if (norm === (ev.description || '')) return;
+    ev.description = norm;
+    tvizRefreshSearchIndex(evId, norm);
+    save();
+  }
+}
+
+// Keep the summary search matching new text without a full re-render: append the
+// edited value to every card's data-search haystack for this event.
+function tvizRefreshSearchIndex(evId, newText) {
+  if (!newText) return;
+  document.querySelectorAll(`#tviz-body .tviz-ev[data-evid="${evId}"]`).forEach(card => {
+    card.dataset.search = (card.dataset.search || '') + ' ' + newText.toLowerCase();
+  });
+}
+function tvizPhotoGridHTML(ev) {
+  return (ev.photos || []).map((url, i) => `<div class="tviz-photo-wrap">
+    <img src="${url}" class="tviz-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})" onerror="hideBrokenPhotoThumb(this, '.tviz-photo-wrap')">
+    <button type="button" class="tviz-photo-del" onclick="event.stopPropagation();tvizDeletePhoto(${ev.id}, ${i})" title="Delete this photo">✕</button>
+  </div>`).join('');
+}
+function tvizDeletePhoto(evId, idx) {
+  const ev = events.find(e => e.id === evId);
+  if (!ev || !ev.photos || idx >= ev.photos.length) return;
+  if (!confirm('Delete this photo? It is also removed from GitHub — this can\u2019t be undone.')) return;
+  const [url] = ev.photos.splice(idx, 1);
+  save();
+  ghDeleteImage(url); // fire-and-forget, same as the event form's ✕
+  // Surgical re-render of just this event's grid (fresh indices; no map re-init)
+  const grid = document.getElementById('tviz-photos-' + evId);
+  if (grid) {
+    if (ev.photos.length) grid.innerHTML = tvizPhotoGridHTML(ev);
+    else grid.remove();
+  }
+}
+
 // ── Distance-comparison ladder (Trip Summary fun fact) ────────────────────────
 // Picks the most MEANINGFUL yardstick for the trip's size, so a weekend trip gets
 // "64% of the way across Colorado" instead of a demoralizing "1.5% of the Earth".
@@ -2669,16 +2832,15 @@ function openTripViz(tripId) {
         evExtra += `<div class="tviz-ev-drive"><a href="${mapsSearch(ev.title)}" target="_blank">📍 Find on map</a></div>`;
       }
 
-      // ── Description (only on the start day) ──
-      if (ev.description && isStart) {
-        evExtra += `<div class="tviz-ev-desc">${esc(ev.description)}</div>`;
+      // ── Description (only on the start day; always rendered there so edit mode
+      //    can add notes to an event that has none — :empty CSS hides it otherwise) ──
+      if (isStart) {
+        evExtra += `<div class="tviz-ev-desc" data-tviz-desc="${ev.id}">${esc(ev.description || '')}</div>`;
       }
 
       // ── Photos (only on the start day) ──
       if (ev.photos && ev.photos.length && isStart) {
-        evExtra += `<div class="tviz-photos">` +
-          ev.photos.map((url, i) => `<img src="${url}" class="tviz-photo-thumb" loading="lazy" onclick="openPhotoLightbox(${ev.id}, ${i})" onerror="hideBrokenPhotoThumb(this)">`).join('') +
-          `</div>`;
+        evExtra += `<div class="tviz-photos" id="tviz-photos-${ev.id}">` + tvizPhotoGridHTML(ev) + `</div>`;
       }
 
       // Everything the search box can match on for this event: title, notes, every
@@ -2692,10 +2854,11 @@ function openTripViz(tripId) {
       bodyHtml += `<div class="tviz-ev" style="${cardStyle}" data-evid="${ev.id}" data-photos="${ev.photos && ev.photos.length ? 1 : 0}" data-search="${esc(searchText)}">
         <div class="tviz-ev-icon">${isStart ? cat.emoji : '↕'}</div>
         <div class="tviz-ev-body">
-          <div class="tviz-ev-title">${esc(ev.title)}</div>
+          <div class="tviz-ev-title" data-tviz-title="${ev.id}">${esc(ev.title)}</div>
           <div class="tviz-ev-time">${timeStr} &nbsp;·&nbsp; ${cat.label}</div>
           ${evExtra}
         </div>
+        <button type="button" class="tviz-ev-editbtn" onclick="tvizEditEvent(${ev.id})" title="Open in event editor"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8.5 1.5l2 2L4 10l-2.5.5L2 8l6.5-6.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button>
       </div>`;
     }
     bodyHtml += `</div>`;
@@ -2704,6 +2867,7 @@ function openTripViz(tripId) {
   // ── populate & show ──
   document.getElementById('tviz-color-bar').style.background = trip.color;
   document.getElementById('tviz-title').textContent = trip.name;
+  tvizEditMode = true; toggleTvizEditMode(); // always start with edit mode OFF
   document.getElementById('tviz-body').innerHTML = bodyHtml;
   tvizResetFilters(); // filters left over from the last visit must not hide anything now
   const overlay = document.getElementById('trip-viz-overlay');
@@ -4990,6 +5154,37 @@ function ghTripFilename(trip) {
   return (trip.name.replace(/[^\w\s\-]/g,'').trim().replace(/\s+/g,'_') || 'trip') + '.csv';
 }
 
+// The canonical share id for a trip — same slug as its CSV filename, so every
+// device derives the identical link for the same trip.
+function ghTripSlug(trip) {
+  return ghTripFilename(trip).replace(/\.csv$/, '');
+}
+
+// Which shared/ files could answer a share id? Legacy ids were {slug}-{8 hex}
+// random snapshots; for those, try the canonical LIVE file first (so links already
+// in the wild show the latest data once one exists), then fall back to the frozen
+// legacy snapshot. Canonical ids resolve to themselves.
+function shareLinkCandidates(id) {
+  const m = /^(.+)-[0-9a-f]{8}$/.exec(id);
+  return m ? [m[1], id] : [id];
+}
+
+// The public read-only payload for a trip (used by Share and by the post-save
+// share-refresh in executeGhSave).
+function buildSharePayload(trip) {
+  const tripEvents = events
+    .filter(e => e.tripId === trip.id)
+    .map(ev => ({ ...ev, start: ev.start.toISOString(), end: ev.end.toISOString() }));
+  return { version: '2.0', generatedAt: Date.now(), trip: { ...trip }, events: tripEvents };
+}
+
+// Compare two share payloads ignoring generatedAt, to skip no-op refresh commits.
+function sharePayloadEqual(a, b) {
+  try {
+    return JSON.stringify({ t: a.trip, e: a.events }) === JSON.stringify({ t: b.trip, e: b.events });
+  } catch (_) { return false; }
+}
+
 // Build history archive filename: {trip}_{YYYY-MM-DDTHH-MM}_{device}.csv
 function ghHistoryFilename(trip, deviceLabel) {
   const base   = trip.name.replace(/[^\w\s\-]/g,'').trim().replace(/\s+/g,'_') || 'trip';
@@ -5380,29 +5575,29 @@ async function ghShareTrip(tripId) {
   const trip = trips.find(t => t.id === tripId);
   if (!trip) return;
 
-  const tripEvents = events
-    .filter(e => e.tripId === tripId)
-    .map(ev => ({ ...ev, start: ev.start.toISOString(), end: ev.end.toISOString() }));
-
-  // Generate share ID: {slug}-{8hex}
-  const slug = ghSanitize(trip.name) || 'trip';
-  const hexBytes = Array.from(crypto.getRandomValues(new Uint8Array(4)))
-    .map(b => b.toString(16).padStart(2, '0')).join('');
-  const shareId = `${slug}-${hexBytes}`;
-
-  const payload = {
-    version: '1.1',
-    generatedAt: Date.now(),
-    trip: { ...trip },
-    events: tripEvents,
-  };
-
+  // ONE canonical link per trip: the share id IS the trip slug (the same key the
+  // CSV sync uses), so every device — and every re-share — produces the identical
+  // URL, and the file behind it is refreshed rather than duplicated. Legacy links
+  // ({slug}-{8hex} snapshots) are still resolved by the viewer, see loadSharedView.
+  const shareId = ghTripSlug(trip);
+  const payload = buildSharePayload(trip);
   const filePath = `shared/${shareId}.json`;
 
   try {
     // Sha-safe writer handles both create and update, and recovers if a retry after a
     // lost response collides with our own already-landed write (lossy connections).
     await ghPutFileSafe(filePath, `Share trip: ${trip.name}`, ghEncode(JSON.stringify(payload)), token, owner, repo);
+
+    // Trip renamed since it was last shared? Leave a pointer at the old address so
+    // links minted under the previous name keep working.
+    if (trip.shareSlug && trip.shareSlug !== shareId) {
+      try {
+        await ghPutFileSafe(`shared/${trip.shareSlug}.json`, `Redirect old share link: ${trip.name}`,
+          ghEncode(JSON.stringify({ version: '2.0', redirect: shareId })), token, owner, repo);
+      } catch (_) { /* best effort */ }
+    }
+    trip.shareSlug = shareId;
+    save();
 
     const shareUrl = `https://${owner}.github.io/${repo}/?share=${shareId}`;
     document.getElementById('share-url-input').value = shareUrl;
@@ -5501,6 +5696,49 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
   if (skipped) parts.push(`${skipped} unchanged`);
   if (failed)  parts.push(`${failed} failed`);
   ghLog(`Done — ${parts.join(', ')}.`, saved > 0 ? 'ok' : skipped > 0 ? 'info' : 'warn');
+
+  // Keep public share links live: any trip that has ever been shared (canonical
+  // shared/{slug}.json exists, or a legacy {slug}-{8hex}.json snapshot does) gets
+  // its shared payload refreshed so everyone holding the link sees this save.
+  // Trips never shared are left alone — nothing about them is published.
+  try {
+    const listing = await ghApi('GET', 'shared', null, token, owner, repo);
+    if (Array.isArray(listing)) {
+      const names = new Set(listing.map(f => f.name));
+      for (const trip of tripsToSave) {
+        const slug = ghTripSlug(trip);
+        const canonical = `${slug}.json`;
+        const hasLegacy = [...names].some(n =>
+          n.startsWith(slug + '-') && /^[0-9a-f]{8}\.json$/.test(n.slice(slug.length + 1)));
+        if (!names.has(canonical) && !hasLegacy) continue;
+        const payload = buildSharePayload(trip);
+        if (names.has(canonical)) {
+          // Skip the commit when nothing shared-visible changed
+          const cur = await ghApi('GET', `shared/${canonical}`, null, token, owner, repo);
+          if (cur) {
+            try { if (sharePayloadEqual(JSON.parse(ghDecode(cur.content)), payload)) continue; }
+            catch (_) { /* unreadable → just overwrite */ }
+          }
+        }
+        await ghPutFileSafe(`shared/${canonical}`, `Refresh shared trip: ${trip.name}`,
+          ghEncode(JSON.stringify(payload)), token, owner, repo);
+        // Renamed since last shared? Point the old address at the new one so
+        // links minted under the previous name keep working.
+        if (trip.shareSlug && trip.shareSlug !== slug && names.has(`${trip.shareSlug}.json`)) {
+          try {
+            await ghPutFileSafe(`shared/${trip.shareSlug}.json`, `Redirect old share link: ${trip.name}`,
+              ghEncode(JSON.stringify({ version: '2.0', redirect: slug })), token, owner, repo);
+          } catch (_) { /* best effort */ }
+        }
+        trip.shareSlug = slug;
+        ghLog(`  ↳ refreshed share link for "${trip.name}"`, 'info');
+      }
+      save();
+    }
+  } catch (err) {
+    ghLog(`⚠ Share-link refresh: ${err.message}`, 'warn');
+  }
+
   checkSyncStatus(true); // refresh the banner/badge with the new state
 }
 
