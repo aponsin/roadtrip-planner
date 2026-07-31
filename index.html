@@ -5215,7 +5215,7 @@ function buildSharePayload(trip) {
 // to them — this stub is what makes a shared link preview as the TRIP (name,
 // dates, first photo) instead of "Road Trip Planner". It immediately redirects
 // into the app. `stubSlug` lets a renamed trip's old address point at the new one.
-function buildShareStubHTML(trip, tripEvents, owner, repo, stubSlug) {
+function buildShareStubHTML(trip, tripEvents, owner, repo, stubSlug, imageUrl) {
   const slug = stubSlug || ghTripSlug(trip);
   const app = `https://${owner}.github.io/${repo}/?share=${encodeURIComponent(slug)}`;
   let dates = '';
@@ -5231,7 +5231,7 @@ function buildShareStubHTML(trip, tripEvents, owner, repo, stubSlug) {
     dates = `${fmt(min)} – ${fmt(max)}, ${new Date(max).getFullYear()} · ${days} day${days === 1 ? '' : 's'}`;
   }
   const firstWithPhoto = tripEvents.find(e => e.photos && e.photos.length);
-  const photo = firstWithPhoto ? firstWithPhoto.photos[0] : '';
+  const photo = imageUrl || (firstWithPhoto ? firstWithPhoto.photos[0] : '');
   const title = esc(trip.name);
   const desc = esc(dates ? `${dates} · Road trip itinerary` : 'Road trip itinerary');
   return `<!doctype html>
@@ -5249,6 +5249,196 @@ ${photo ? `<meta property="og:image" content="${esc(photo)}">\n<meta name="twitt
 </head><body style="font-family:system-ui;padding:24px">
 <p>Opening “${title}”… <a href="${esc(app)}">tap here if nothing happens</a>.</p>
 </body></html>`;
+}
+
+// ── SHARE PREVIEW MAP IMAGE ────────────────────────────────────────────────────
+// The trip's og:image is a rendered snapshot of the full-route map (the same thing
+// the Trip Summary's overview map shows), drawn on a canvas from OSM tiles + the
+// cached route geometry and uploaded to media/share_previews/{slug}.jpg. media/ is
+// outside the Pages workflow's paths filter, so image refreshes don't trigger
+// deploys. Falls back to the trip's first photo if rendering isn't possible.
+
+// Cache-first leg resolution — same steps as initTripOverviewMap (geocode, route,
+// stale-route self-heal, outlier rejection) but headless. Bails out (→ []) if it
+// would need more than `maxNetGeocodes` uncached geocode lookups: at Nominatim's
+// 1 req/s that would stall the share for minutes, and warmLegMaps will have filled
+// the caches by the next save anyway.
+async function collectTripLegGeometry(tripId, maxNetGeocodes = 10) {
+  const legs = events
+    .filter(e => e.tripId === tripId && e.category === 'driving' && e.departure && e.arrival)
+    .sort((a, b) => a.start - b.start);
+  if (!legs.length) return [];
+  const validGeo = g => g && Number.isFinite(g.lat) && Number.isFinite(g.lon);
+  const drawn = [];
+  let netGeo = 0;
+  for (const leg of legs) {
+    let usedGeocoder = false, usedRouter = false;
+    for (const addr of [leg.departure, leg.arrival]) {
+      if (!validGeo(_geoCache[addr])) {
+        if (++netGeo > maxNetGeocodes) return [];
+        try { _geoCache[addr] = await geocode(addr); } catch (_) { _geoCache[addr] = null; }
+        _saveGeoCache(); usedGeocoder = true;
+      }
+    }
+    const dep = _geoCache[leg.departure], arr = _geoCache[leg.arrival];
+    if (!validGeo(dep) || !validGeo(arr)) continue;
+    const key = leg.departure + '|' + leg.arrival;
+    if (!(key in _routeCache)) { _routeCache[key] = await fetchLegRoute(dep, arr); _saveRouteCache(); usedRouter = true; }
+    if (_routeCache[key] && !routeMatchesEndpoints(_routeCache[key], dep, arr)) {
+      _routeCache[key] = await fetchLegRoute(dep, arr);
+      _saveRouteCache(); usedRouter = true;
+    }
+    drawn.push({ leg, dep, arr, geom: _routeCache[key] });
+    if (usedGeocoder) await new Promise(r => setTimeout(r, 1100));
+    else if (usedRouter) await new Promise(r => setTimeout(r, 300));
+  }
+  if (!drawn.length) return [];
+  // Outlier rejection (same rule as the overview map: largest <1500mi cluster wins)
+  const pts = [];
+  for (const d of drawn) pts.push({ lat: d.dep.lat, lon: d.dep.lon }, { lat: d.arr.lat, lon: d.arr.lon });
+  let clusterSeed = pts[0], best = -1;
+  for (const p of pts) {
+    const n = pts.filter(q => distanceMiles(p.lat, p.lon, q.lat, q.lon) < 1500).length;
+    if (n > best) { best = n; clusterSeed = p; }
+  }
+  const inCluster = p => distanceMiles(clusterSeed.lat, clusterSeed.lon, p.lat, p.lon) < 1500;
+  return drawn.filter(d => inCluster(d.dep) && inCluster(d.arr));
+}
+
+// Web-Mercator: normalized [0..1] world coordinates (multiply by 256·2^z for pixels).
+function mercNorm(lat, lon) {
+  const clamped = Math.max(-85.05, Math.min(85.05, lat));
+  const sin = Math.sin(clamped * Math.PI / 180);
+  return [
+    (lon + 180) / 360,
+    0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI),
+  ];
+}
+
+async function renderTripMapImage(tripId, width = 1200, height = 630) {
+  if (typeof document === 'undefined' || !document.createElement) return null;
+  const kept = await collectTripLegGeometry(tripId);
+  if (!kept.length) return null;
+
+  // World-normalized bounds over every route point (or endpoints when no geometry)
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const acc = (lat, lon) => {
+    const [x, y] = mercNorm(lat, lon);
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  };
+  for (const d of kept) {
+    if (d.geom && d.geom.coordinates) for (const [lon, lat] of d.geom.coordinates) acc(lat, lon);
+    else { acc(d.dep.lat, d.dep.lon); acc(d.arr.lat, d.arr.lon); }
+  }
+
+  // Highest zoom (capped 2..12) at which the padded bounds fit the canvas
+  const pad = 70;
+  let zoom = 12;
+  for (; zoom > 2; zoom--) {
+    const s = 256 * Math.pow(2, zoom);
+    if ((maxX - minX) * s <= width - 2 * pad && (maxY - minY) * s <= height - 2 * pad) break;
+  }
+  const scale = 256 * Math.pow(2, zoom);
+  const x0 = ((minX + maxX) / 2) * scale - width / 2;
+  const y0 = ((minY + maxY) / 2) * scale - height / 2;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#dbe4ec'; ctx.fillRect(0, 0, width, height); // sea-ish under missing tiles
+
+  // Tiles (CORS-enabled on tile.openstreetmap.org, so the canvas stays exportable)
+  const n = Math.pow(2, zoom);
+  const jobs = [];
+  for (let tx = Math.floor(x0 / 256); tx * 256 < x0 + width; tx++) {
+    for (let ty = Math.max(0, Math.floor(y0 / 256)); ty * 256 < y0 + height && ty < n; ty++) {
+      const wrapX = ((tx % n) + n) % n;
+      jobs.push(new Promise(resolve => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        const done = () => resolve(null);
+        const timer = setTimeout(done, 8000);
+        img.onload = () => { clearTimeout(timer); try { ctx.drawImage(img, tx * 256 - x0, ty * 256 - y0); } catch (_) {} resolve(null); };
+        img.onerror = () => { clearTimeout(timer); done(); };
+        img.src = `https://tile.openstreetmap.org/${zoom}/${wrapX}/${ty}.png`;
+      }));
+    }
+  }
+  await Promise.all(jobs);
+
+  const px = (lat, lon) => {
+    const [x, y] = mercNorm(lat, lon);
+    return [x * scale - x0, y * scale - y0];
+  };
+  const strokePath = (coords, style) => {
+    if (coords.length < 2) return;
+    ctx.beginPath();
+    coords.forEach(([lat, lon], i) => {
+      const [x, y] = px(lat, lon);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    Object.assign(ctx, style);
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.stroke();
+  };
+
+  // Routes: white halo under the app's route blue; dashed fallback when no geometry
+  for (const pass of [
+    { strokeStyle: '#ffffff', lineWidth: 8 },
+    { strokeStyle: '#2563eb', lineWidth: 4.5 },
+  ]) {
+    for (const d of kept) {
+      ctx.setLineDash(d.geom && d.geom.coordinates ? [] : [10, 8]);
+      const coords = d.geom && d.geom.coordinates
+        ? d.geom.coordinates.map(([lon, lat]) => [lat, lon])
+        : [[d.dep.lat, d.dep.lon], [d.arr.lat, d.arr.lon]];
+      strokePath(coords, pass);
+    }
+  }
+  ctx.setLineDash([]);
+
+  // Endpoint dots; trip start green, trip end red, both a bit bigger
+  const dot = (lat, lon, r, fill) => {
+    const [x, y] = px(lat, lon);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+  };
+  for (const d of kept) { dot(d.dep.lat, d.dep.lon, 5, '#2563eb'); dot(d.arr.lat, d.arr.lon, 5, '#2563eb'); }
+  dot(kept[0].dep.lat, kept[0].dep.lon, 9, '#16a34a');
+  const last = kept[kept.length - 1];
+  dot(last.arr.lat, last.arr.lon, 9, '#dc2626');
+
+  // OSM tile-usage policy requires attribution on rendered output
+  ctx.font = '13px system-ui, sans-serif';
+  const attr = '© OpenStreetMap contributors';
+  const tw = ctx.measureText(attr).width;
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.fillRect(width - tw - 16, height - 26, tw + 16, 26);
+  ctx.fillStyle = '#334155';
+  ctx.fillText(attr, width - tw - 8, height - 8);
+
+  try { return canvas.toDataURL('image/jpeg', 0.85); } catch (_) { return null; } // tainted → null
+}
+
+// Render-and-upload with a signature guard: the image is only re-rendered (tile
+// downloads, upload commit) when the trip's driving legs actually changed.
+async function ensureShareMapImage(trip, slug, token, owner, repo) {
+  const legs = events.filter(e => e.tripId === trip.id && e.category === 'driving' && e.departure && e.arrival);
+  if (!legs.length) return null;
+  const sig = strHash(JSON.stringify(legs.map(l => [l.departure, l.arrival])));
+  const path = `media/share_previews/${slug}.jpg`;
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
+  let sigs = {};
+  try { sigs = JSON.parse(localStorage.getItem('rtp4_share_maps') || '{}'); } catch (_) {}
+  if (sigs[slug] === sig) return url;
+  const dataUrl = await renderTripMapImage(trip.id);
+  if (!dataUrl) return null;
+  await ghPutFileSafe(path, `Share preview map: ${trip.name}`, dataUrl.split(',')[1], token, owner, repo);
+  sigs[slug] = sig;
+  try { localStorage.setItem('rtp4_share_maps', JSON.stringify(sigs)); } catch (_) {}
+  return url;
 }
 
 // Compare two share payloads ignoring generatedAt, to skip no-op refresh commits.
@@ -5743,10 +5933,13 @@ async function ghShareTrip(tripId) {
     await ghPutFileSafe(filePath, `Share trip: ${trip.name}`, ghEncode(JSON.stringify(payload)), token, owner, repo);
 
     // Static preview page (title/og tags for iMessage & co.) — this is the URL
-    // people actually get; it redirects into the app.
+    // people actually get; it redirects into the app. Its og:image is a rendered
+    // snapshot of the trip's route map (first photo as fallback).
     const tripEvs = events.filter(e => e.tripId === trip.id);
+    let mapImg = null;
+    try { mapImg = await ensureShareMapImage(trip, shareId, token, owner, repo); } catch (_) {}
     await ghPutFileSafe(`shared/${shareId}.html`, `Share preview page: ${trip.name}`,
-      ghEncode(buildShareStubHTML(trip, tripEvs, owner, repo)), token, owner, repo);
+      ghEncode(buildShareStubHTML(trip, tripEvs, owner, repo, null, mapImg)), token, owner, repo);
 
     // Trip renamed since it was last shared? Leave pointers at the old address so
     // links minted under the previous name keep working (JSON for the app, HTML
@@ -5756,7 +5949,7 @@ async function ghShareTrip(tripId) {
         await ghPutFileSafe(`shared/${trip.shareSlug}.json`, `Redirect old share link: ${trip.name}`,
           ghEncode(JSON.stringify({ version: '2.0', redirect: shareId })), token, owner, repo);
         await ghPutFileSafe(`shared/${trip.shareSlug}.html`, `Redirect old share page: ${trip.name}`,
-          ghEncode(buildShareStubHTML(trip, tripEvs, owner, repo, shareId)), token, owner, repo);
+          ghEncode(buildShareStubHTML(trip, tripEvs, owner, repo, shareId, mapImg)), token, owner, repo);
       } catch (_) { /* best effort */ }
     }
     trip.shareSlug = shareId;
@@ -5922,8 +6115,10 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
             catch (_) { /* unreadable → just overwrite */ }
             if (unchanged) {
               if (!names.has(`${slug}.html`)) {
+                let bfImg = null;
+                try { bfImg = await ensureShareMapImage(trip, slug, token, owner, repo); } catch (_) {}
                 await ghPutFileSafe(`shared/${slug}.html`, `Add share preview page: ${trip.name}`,
-                  ghEncode(buildShareStubHTML(trip, events.filter(e => e.tripId === trip.id), owner, repo)), token, owner, repo);
+                  ghEncode(buildShareStubHTML(trip, events.filter(e => e.tripId === trip.id), owner, repo, null, bfImg)), token, owner, repo);
                 ghLog(`  ↳ added share preview page for "${trip.name}"`, 'info');
               }
               continue;
@@ -5933,10 +6128,13 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
         await ghPutFileSafe(`shared/${canonical}`, `Refresh shared trip: ${trip.name}`,
           ghEncode(JSON.stringify(payload)), token, owner, repo);
         // Keep the static preview page fresh too (identical content is skipped by
-        // the sha-safe writer, so this rarely creates a commit).
+        // the sha-safe writer, so this rarely creates a commit). The route-map
+        // og:image is only re-rendered when the trip's driving legs changed.
         const stubEvs = events.filter(e => e.tripId === trip.id);
+        let stubImg = null;
+        try { stubImg = await ensureShareMapImage(trip, slug, token, owner, repo); } catch (_) {}
         await ghPutFileSafe(`shared/${slug}.html`, `Refresh share preview page: ${trip.name}`,
-          ghEncode(buildShareStubHTML(trip, stubEvs, owner, repo)), token, owner, repo);
+          ghEncode(buildShareStubHTML(trip, stubEvs, owner, repo, null, stubImg)), token, owner, repo);
         // Renamed since last shared? Point the old address at the new one so
         // links minted under the previous name keep working.
         if (trip.shareSlug && trip.shareSlug !== slug && names.has(`${trip.shareSlug}.json`)) {
@@ -5944,7 +6142,7 @@ async function executeGhSave(tripIds, token, owner, repo, repoStr, deviceLabel) 
             await ghPutFileSafe(`shared/${trip.shareSlug}.json`, `Redirect old share link: ${trip.name}`,
               ghEncode(JSON.stringify({ version: '2.0', redirect: slug })), token, owner, repo);
             await ghPutFileSafe(`shared/${trip.shareSlug}.html`, `Redirect old share page: ${trip.name}`,
-              ghEncode(buildShareStubHTML(trip, stubEvs, owner, repo, slug)), token, owner, repo);
+              ghEncode(buildShareStubHTML(trip, stubEvs, owner, repo, slug, stubImg)), token, owner, repo);
           } catch (_) { /* best effort */ }
         }
         trip.shareSlug = slug;
