@@ -1484,6 +1484,7 @@ body.read-only .trip-act-btn.import-photos-btn { display: none !important; }
         <input id="share-url-input" type="text" readonly style="flex:1;font-size:12px;padding:7px 8px;border:1.5px solid #e2e8f0;border-radius:6px;background:#f8fafc;color:#0f172a;min-width:0">
         <button id="share-copy-btn" onclick="copyShareUrl()" style="padding:7px 14px;background:#1e3a5f;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">Copy</button>
       </div>
+      <div id="share-img-note" style="margin-top:8px;font-size:11px;color:#64748b"></div>
     </div>
   </div>
 </div>
@@ -5957,6 +5958,15 @@ async function ghShareTrip(tripId) {
 
     const shareUrl = `https://${owner}.github.io/${repo}/shared/${shareId}.html`;
     document.getElementById('share-url-input').value = shareUrl;
+    const imgNote = document.getElementById('share-img-note');
+    if (imgNote) {
+      const hasPhotos = tripEvs.some(e => e.photos && e.photos.length);
+      imgNote.textContent = mapImg
+        ? '🗺 Link preview image: rendered route map.'
+        : hasPhotos
+          ? '⚠ Route-map image could not be rendered — link previews will use the trip’s first photo. (Check driving legs / connection, then Share again.)'
+          : '⚠ No preview image: route map could not be rendered and the trip has no photos.';
+    }
     document.getElementById('share-copy-btn').textContent = 'Copy';
     document.getElementById('share-modal').classList.add('open');
   } catch (err) {
